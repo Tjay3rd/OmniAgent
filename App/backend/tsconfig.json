@@ -1,0 +1,29 @@
+{
+	"compilerOptions": {
+		/* Target & Environment */
+		"target": "ES2022" /* Specify ECMAScript target version */,
+		"lib": ["ES2022"] /* Specify library files to be included in the compilation */,
+
+		/* Modules */
+		"module": "NodeNext" /* Required for true Node.js ES Modules support */,
+		"moduleResolution": "NodeNext" /* Matches how Node.js looks up modules */,
+
+		/* Emit */
+		"outDir": "./dist" /* Redirect output structure to the directory */,
+		"rootDir": "./src" /* Specify the root folder of input files */,
+		"removeComments": true /* Do not emit comments to output */,
+		"sourceMap": true /* Generates corresponding '.map' file for debugging */,
+
+		/* Interop Constraints */
+		"esModuleInterop": true /* Emits additional JavaScript to ease support for importing CommonJS modules */,
+		"forceConsistentCasingInFileNames": true /* Disallow inconsistently-cased references to the same file */,
+		"allowSyntheticDefaultImports": true /* Allow default imports from modules with no default export (fixes your JWT issue) */,
+
+		/* Type Checking */
+		"strict": true /* Enable all strict type-checking options */,
+		"noImplicitAny": true /* Raise error on expressions and declarations with an implied 'any' type */,
+		"skipLibCheck": true /* Skip type checking of declaration files (*.d.ts) */
+	},
+	"include": ["src/**/*"] /* Compile everything inside the src folder */,
+	"exclude": ["node_modules", "dist"] /* Keep node_modules and your build folder out of compilation */
+}
