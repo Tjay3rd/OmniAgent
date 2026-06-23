@@ -1,9 +1,8 @@
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 import RefreshToken from "../models/refreshToken.model.js";
-import { signAccessToken } from "../lib/jwt.js";
 import jwt from "jsonwebtoken";
-import crypto from "crypto";
+import { env } from "../validation/env.zod.js";
 import { signTokenAndSetCookies } from "../lib/jwt.js";
 import { Request, Response, NextFunction } from "express";
 import User from "../models/user.model.js";
@@ -14,7 +13,7 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 	try {
 		const { companyName, name, email, password, subdomain } = req.body;
 
-		if (!companyName || !name || !email || !password || subdomain) {
+		if (!companyName || !name || !email || !password || !subdomain) {
 			return res.status(400).json({ error: "All fields are required" });
 		}
 
@@ -28,8 +27,8 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 			[
 				{
 					companyName,
-					subdomain,
 					email, // The billing/contact email for the business
+					subdomain,
 					subscriptionStatus: "incomplete", // Becomes active after Stripe checkout
 				},
 			],
@@ -117,6 +116,13 @@ export const loginHandler =
 	};
 
 export const handleTokenRefresh = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+	const IDLE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days sliding window
+	const baseOptions = {
+		httpOnly: true,
+		secure: env.NODE_ENV === "production",
+		sameSite: "strict" as const,
+	};
+
 	try {
 		const oldRefreshToken = req.cookies.refreshToken;
 		if (!oldRefreshToken) {
@@ -129,8 +135,8 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 		// BREACH DETECTED (Case 1): Token not in DB but cookie exists?
 		// Attacker might be reusing a token from a wiped family.
 		if (!tokenDoc) {
-			res.clearCookie("accessToken");
-			res.clearCookie("refreshToken");
+			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
+			res.clearCookie("refreshToken", { ...baseOptions, path: "/api/refresh" });
 			return res.status(401).json({ error: "Session invalid. Please re-login." });
 		}
 
@@ -138,8 +144,8 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 		// Someone is attempting a replay attack. Nuke the whole family!
 		if (tokenDoc.isUsed) {
 			await RefreshToken.deleteMany({ familyId: tokenDoc.familyId });
-			res.clearCookie("accessToken");
-			res.clearCookie("refreshToken");
+			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
+			res.clearCookie("refreshToken", { ...baseOptions, path: "/api/refresh" });
 			return res.status(403).json({
 				error: "Security breach detected. All active sessions revoked.",
 			});
@@ -148,54 +154,77 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 		// 2. Verify the structural integrity of the JWT token string
 		let decoded: any;
 		try {
-			decoded = jwt.verify(oldRefreshToken, process.env.REFRESH_SECRET as string);
+			decoded = jwt.verify(oldRefreshToken, env.JWT_REFRESH_SECRET);
 		} catch (err) {
 			// If token is expired or altered, clear it out safely
 			await tokenDoc.deleteOne();
 			return res.status(401).json({ error: "Session expired" });
 		}
 
-		// 3. Mark the current token as used immediately
+		const now = Date.now();
+		const familyExpiresAt = tokenDoc.familyExpiresAt;
+
+		//3. Hard cap check — family has lived its full life
+		if (now >= familyExpiresAt.getTime()) {
+			await RefreshToken.deleteMany({
+				familyId: tokenDoc.familyId,
+			});
+			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
+
+			res.clearCookie("refreshToken", { ...baseOptions, path: "/api/refresh" });
+			return res.status(401).json({
+				error: "Session expired. Please re-login.",
+			});
+		}
+
+		// 4. Mark the current token as used immediately
 		tokenDoc.isUsed = true;
 		await tokenDoc.save();
 
-		// 4. Generate a fresh Token Pair inside the same Family lineage
-		const newAccessToken = signAccessToken({
-			id: decoded.id,
-			tenantId: decoded.tenantId,
-			role: decoded.role,
-		});
+		// Sliding idle window, but capped at family ceiling
+		const slidingExpiry = now + IDLE_WINDOW_MS;
+		const newExpiresAt = new Date(Math.min(slidingExpiry, familyExpiresAt.getTime()));
+		const remainingMs = newExpiresAt.getTime() - now;
 
-		const newRawRefreshToken = crypto.randomBytes(40).toString("hex");
-		const jwtRefreshToken = jwt.sign(
+		// 5. Generate a fresh Token Pair inside the same Family lineage
+		const newAccessToken = jwt.sign(
 			{ id: decoded.id, tenantId: decoded.tenantId, role: decoded.role },
-			process.env.REFRESH_SECRET as string,
-			{ expiresIn: "7d" },
+			env.JWT_ACCESS_SECRET,
+			{ expiresIn: "15m" },
 		);
 
-		// 5. Store the new child token in the database family tree
+		const newRefreshToken = jwt.sign(
+			{
+				id: decoded.id,
+				tenantId: decoded.tenantId,
+				role: decoded.role,
+			},
+			env.JWT_REFRESH_SECRET,
+			{ expiresIn: Math.floor(remainingMs / 1000) },
+		);
+
 		await RefreshToken.create({
 			userId: decoded.id,
 			tenantId: decoded.tenantId,
-			token: jwtRefreshToken,
-			familyId: tokenDoc.familyId, // Inherits family pool context
+			token: newRefreshToken,
+			familyId: tokenDoc.familyId,
+			familyExpiresAt: familyExpiresAt, // never changes
 			isUsed: false,
-			expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+			expiresAt: newExpiresAt, // slides forward each time
 		});
 
 		// 6. Deploy updated httpOnly cookies safely to browser storage
+
 		res.cookie("accessToken", newAccessToken, {
-			httpOnly: true,
-			secure: process.env.NODE_ENV === "production",
-			sameSite: "strict",
+			...baseOptions,
+			path: "/",
 			maxAge: 15 * 60 * 1000, // 15 Minutes
 		});
 
-		res.cookie("refreshToken", jwtRefreshToken, {
-			httpOnly: true,
-			secure: process.env.NODE_ENV === "production",
-			sameSite: "strict",
-			maxAge: 7 * 24 * 60 * 60 * 1000, // 7 Days
+		res.cookie("refreshToken", newRefreshToken, {
+			...baseOptions,
+			path: "/api/refresh",
+			maxAge: remainingMs,
 		});
 
 		return res.status(200).json({ status: "Session rotated successfully" });
@@ -214,16 +243,20 @@ export const handleLogout = async (req: Request, res: Response, next: NextFuncti
 		}
 
 		// Clear both httpOnly cookies immediately from the user's browser storage
-		res.clearCookie("accessToken", {
+		const baseOptions = {
 			httpOnly: true,
-			secure: process.env.NODE_ENV === "production",
-			sameSite: "strict",
+			secure: env.NODE_ENV === "production",
+			sameSite: "strict" as const,
+		};
+
+		res.clearCookie("accessToken", {
+			...baseOptions,
+			path: "/",
 		});
 
 		res.clearCookie("refreshToken", {
-			httpOnly: true,
-			secure: process.env.NODE_ENV === "production",
-			sameSite: "strict",
+			...baseOptions,
+			path: "/api/refresh",
 		});
 
 		return res.status(200).json({

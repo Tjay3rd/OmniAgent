@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import Message from "../models/chatMessage.model.js";
 import Conversation from "../models/chatConversation.model.js";
+import { generateAgentResponseStream } from "./ai.service.js";
 import { ObjectId } from "mongoose";
 
 // Custom type extension to store session metadata directly on the socket object
@@ -99,7 +100,7 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: any) => {
 		text,
 	});
 
-	// 2. Bump conversation metadata stamp
+	// 2. Quickly update conversation metadata (time-stamp) so the listing view can sort by most recent activity.
 	const conversation = await Conversation.findByIdAndUpdate(
 		conversationId,
 		{
@@ -107,13 +108,14 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: any) => {
 		},
 		{ new: true },
 	);
+	if (!conversation) return;
 
 	const stringifiedPayload = JSON.stringify({
 		event: "new_message",
 		data: newMessage,
 	});
 
-	// 3. Broadcast to all matching socket pipes in this Conversation room
+	// 3. Broadcast to all matching socket pipes in this Conversation room so all the paricipants of the conversation can see the new message immediately.
 	const chatRoom = conversationRooms.get(conversationId);
 	if (chatRoom) {
 		chatRoom.forEach((client) => {
@@ -125,49 +127,46 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: any) => {
 
 	// 4. Alert listening dashboards about incoming text events
 	const dashboardRoom = tenantDashboardRooms.get(tenantId);
-	if (dashboardRoom) {
-		const activityPayload = JSON.stringify({
-			event: "conversation_activity",
-			data: { conversationId, lastMessage: text },
+
+	// THE HANDOFF GATEKEEPER CHECK:
+	if (conversation?.aiHandled && senderType === "customer") {
+		// TRIGGER THE AI GENERATION PIPELINE. Fire and forget the async stream block so it doesn't block the socket thread loop.
+		generateAgentResponseStream({
+			tenantId,
+			conversationId,
+			ws, // Pass this exact websocket channel to let the generator pipe tokens down.
 		});
-		dashboardRoom.forEach((client) => {
-			if (client.readyState === WebSocket.OPEN) {
-				client.send(activityPayload);
-			}
+		console.log("AI is actively handling this. Processing streaming tokens...");
+	} else {
+		// THE AI IS MUTED. Alert the assigned agent's live dashboard view instead.
+		broadcastToDashboardRoom(dashboardRoom, "conversation_activity", {
+			conversationId,
+			lastMessage: text,
+			assignedTo: conversation?.assignedTo, // Agent dashboard lights up red.
 		});
+		console.log("AI bypassed. Chat is under human command.");
 	}
-
-	const agentBroadcastToRoom = (tenantId: String, eventDescription: String, actualData: ActualData) => {
-		if (dashboardRoom) {
-			const activityPayload = JSON.stringify({
-				event: eventDescription,
-				data: actualData,
-			});
-			dashboardRoom.forEach((client) => {
-				if (client.readyState === WebSocket.OPEN) {
-					client.send(activityPayload);
-				}
-			});
-		}
-
-		// 4. THE HANDOFF GATEKEEPER CHECK:
-		if (conversation?.aiHandled) {
-			// TRIGGER THE AI GENERATION PIPELINE
-			// triggerAIAgentResponse(tenantId, conversationId, text);
-			console.log("AI is actively handling this. Processing streaming tokens...");
-		} else {
-			// THE AI IS MUTED. Alert the assigned agent's live dashboard view instead
-			agentBroadcastToRoom(tenantId, "conversation_activity", {
-				conversationId,
-				lastMessage: text,
-				assignedTo: conversation?.assignedTo, // Agent dashboard lights up red
-			});
-			console.log("AI bypassed. Chat is under human command.");
-		}
-	};
 };
 
-// Helper 2: Memory manager cleanup loop to prevent active leaks
+//Helper 2: Targeted tenant dashboard broadcasting for AI handoff alerts.
+const broadcastToDashboardRoom = (
+	dashboardRoom: Set<ExtendedWebSocket> | undefined,
+	eventDescription: string,
+	actualData: ActualData,
+) => {
+	if (!dashboardRoom) return;
+	const payload = JSON.stringify({
+		event: eventDescription,
+		data: actualData,
+	});
+	dashboardRoom.forEach((client) => {
+		if (client.readyState === WebSocket.OPEN) {
+			client.send(payload);
+		}
+	});
+};
+
+// Helper 3: Memory manager cleanup loop to prevent active leaks.
 const cleanRooms = (ws: ExtendedWebSocket) => {
 	if (ws.conversationId && conversationRooms.has(ws.conversationId)) {
 		const room = conversationRooms.get(ws.conversationId)!;
@@ -181,18 +180,3 @@ const cleanRooms = (ws: ExtendedWebSocket) => {
 		if (room.size === 0) tenantDashboardRooms.delete(ws.tenantId);
 	}
 };
-
-export const broadcastToConversationRoom = (conversationId: string, payload: object): void => {
-	const chatRoom = conversationRooms.get(conversationId);
-	if (chatRoom) {
-		const stringified = JSON.stringify(payload);
-		chatRoom.forEach((client) => {
-			if (client.readyState === WebSocket.OPEN) {
-				client.send(stringified);
-			}
-		});
-	}
-};
-
-// 3. Define a Type template based on this function that our AI service can use safely
-export type BroadcasterFn = typeof broadcastToConversationRoom;

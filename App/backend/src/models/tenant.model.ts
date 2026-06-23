@@ -21,8 +21,8 @@ const tenantSchema = new Schema<ITenant>(
 	{ timestamps: true },
 );
 
-const Tenant = model("Tenant", tenantSchema);
+const Tenant = model<ITenant>("Tenant", tenantSchema);
 
-type TenantModel = HydratedDocument<typeof Tenant>;
+export type TenantModel = HydratedDocument<typeof Tenant>;
 
 export default Tenant;

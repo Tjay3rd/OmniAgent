@@ -8,13 +8,13 @@ type Updates = {
 		lockoutCount?: number;
 	};
 	$set?: {
-		lockoutUntil?: Date;
+		lockoutUntil: Date;
 	};
 };
 
 export const loginSecurityPlugin = (schema: any, options: Options = {}) => {
-	const MAX_ATTEMPTS = options.maxAttempts ?? 5; //5 attempts before lockout
-	const LOCKOUT_DURATIONS_MS = [
+	const MAX_ATTEMPTS: number = options.maxAttempts ?? 5; //5 attempts before lockout
+	const LOCKOUT_DURATIONS_MS: number[] = [
 		5 * 60 * 1000, // 1st lockout:  5 minutes
 		15 * 60 * 1000, // 2nd lockout: 15 minutes
 		60 * 60 * 1000, // 3rd lockout:  1 hour
@@ -22,8 +22,8 @@ export const loginSecurityPlugin = (schema: any, options: Options = {}) => {
 
 	schema.add({
 		loginAttempts: { type: Number, default: 0, select: false },
-		lockoutUntil: { type: Date, default: null, select: false },
 		lockoutCount: { type: Number, default: 0, select: false },
+		lockoutUntil: { type: Date, default: null, select: false },
 	});
 
 	schema.methods.incrementLoginAttempts = async function () {
@@ -33,20 +33,20 @@ export const loginSecurityPlugin = (schema: any, options: Options = {}) => {
 			return this.updateOne({ $set: { loginAttempts: 1, lockoutUntil: null } });
 		}
 
-		const durationIndex = Math.min(this.lockoutCount, LOCKOUT_DURATIONS_MS.length - 1);
-		const duration = LOCKOUT_DURATIONS_MS[durationIndex];
+		const durationIndex: number = Math.min(this.lockoutCount, LOCKOUT_DURATIONS_MS.length - 1);
+		const duration: number = LOCKOUT_DURATIONS_MS[durationIndex];
 
 		const updates: Updates = { $inc: { loginAttempts: 1 } };
-		const willHitMaxAttempts = this.loginAttempts + 1 >= MAX_ATTEMPTS;
+		const willHitMaxAttempts: boolean = this.loginAttempts + 1 >= MAX_ATTEMPTS;
 
 		if (willHitMaxAttempts) {
 			updates.$set = { lockoutUntil: new Date(Date.now() + duration) };
-			updates.$inc = { loginAttempts: 1, lockoutCount: 1 };
+			updates.$inc = { ...updates.$inc, lockoutCount: 1 };
 		}
 		return this.updateOne(updates);
 	};
 
-	schema.methods.resetLoginAttempts = async function () {
+	schema.methods.resetLoginAttempts = async function (): Promise<void> {
 		return this.updateOne({ $set: { loginAttempts: 0, lockoutUntil: null, lockoutCount: 0 } });
 	};
 

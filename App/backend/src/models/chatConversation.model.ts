@@ -6,6 +6,7 @@ export interface IConversation extends Document {
 	assignedTo?: Schema.Types.ObjectId; // Empty if managed by AI agent
 	status: "open" | "snoozed" | "closed";
 	aiHandled: boolean; // Tracks if AI is actively responding
+	wasFirstHandledByHumanAt: Date | null; // For analytics: when did a human first take over (if ever)
 	createdAt: Date;
 	updatedAt: Date;
 }
@@ -34,6 +35,10 @@ const conversationSchema = new Schema<IConversation>(
 		aiHandled: {
 			type: Boolean,
 			default: true,
+		},
+		wasFirstHandledByHumanAt: {
+			type: Date,
+			default: null,
 		},
 	},
 	{ timestamps: true },

@@ -26,7 +26,7 @@ userSchema.index({ tenantId: 1, email: 1 }, { unique: true });
 
 const User = model("User", userSchema);
 
-type UserModel = HydratedDocument<typeof User>;
+export type UserModel = HydratedDocument<typeof User>;
 
 userSchema.plugin(loginSecurityPlugin, { maxAttempts: 3 });
 
