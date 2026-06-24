@@ -42,3 +42,12 @@ export const loginSchema = z.object({
 		.regex(/[0-9]/, "Must contain a number")
 		.regex(/[!@#$%]/, "Must contain a special character"),
 });
+
+export const agentConfigSchema = z.object({
+	tenantId: z.uuid(),
+	systemPrompt: z.string().min(10).max(500).trim(),
+	temperature: z.number().min(0).max(1),
+	modelProvider: z.string().min(2).max(60).trim(),
+	modelName: z.string().min(2).max(60).trim(),
+	isActive: z.boolean(),
+});

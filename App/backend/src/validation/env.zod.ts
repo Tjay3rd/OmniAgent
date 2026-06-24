@@ -12,6 +12,9 @@ const envSchema = z.object({
 	JWT_ACCESS_SECRET: z.string().min(10, "JWT Secret must be at least 10 characters long"),
 	JWT_REFRESH_SECRET: z.string().min(10, "JWT Secret must be at least 10 characters long"),
 	NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+	STRIPE_SECRET_KEY: z.string().min(10, "Stripe Secret Key must be at least 10 characters long"),
+	STRIPE_WEBHOOK_SECRET: z.string().min(10, "Stripe Webhook Secret must be at least 10 characters long"),
+	FRONTEND_URL: z.url(),
 });
 // Validate process.env against the schema
 const parsedEnv = envSchema.safeParse(process.env);

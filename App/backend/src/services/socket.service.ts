@@ -11,7 +11,7 @@ interface ExtendedWebSocket extends WebSocket {
 	conversationId?: string;
 }
 
-interface ActualData {
+export interface ActualData {
 	conversationId: string;
 	lastMessage: string;
 	assignedTo: ObjectId | undefined;
@@ -72,6 +72,11 @@ export const initWebSocketServer = (wss: WebSocketServer) => {
 						await handleIncomingMessage(ws, data);
 						break;
 
+					// Action D: Dynamic real-time status and handoff synchronization
+					case "update_conversation_status":
+						await handleStatusUpdate(ws, data);
+						break;
+
 					default:
 						ws.send(JSON.stringify({ error: "Unknown event pattern" }));
 				}
@@ -125,9 +130,6 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: any) => {
 		});
 	}
 
-	// 4. Alert listening dashboards about incoming text events
-	const dashboardRoom = tenantDashboardRooms.get(tenantId);
-
 	// THE HANDOFF GATEKEEPER CHECK:
 	if (conversation?.aiHandled && senderType === "customer") {
 		// TRIGGER THE AI GENERATION PIPELINE. Fire and forget the async stream block so it doesn't block the socket thread loop.
@@ -139,7 +141,7 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: any) => {
 		console.log("AI is actively handling this. Processing streaming tokens...");
 	} else {
 		// THE AI IS MUTED. Alert the assigned agent's live dashboard view instead.
-		broadcastToDashboardRoom(dashboardRoom, "conversation_activity", {
+		broadcastToDashboardRoom(tenantId, "conversation_activity", {
 			conversationId,
 			lastMessage: text,
 			assignedTo: conversation?.assignedTo, // Agent dashboard lights up red.
@@ -149,11 +151,8 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: any) => {
 };
 
 //Helper 2: Targeted tenant dashboard broadcasting for AI handoff alerts.
-const broadcastToDashboardRoom = (
-	dashboardRoom: Set<ExtendedWebSocket> | undefined,
-	eventDescription: string,
-	actualData: ActualData,
-) => {
+export const broadcastToDashboardRoom = (tenantId: string, eventDescription: string, actualData: ActualData) => {
+	const dashboardRoom = tenantDashboardRooms.get(tenantId);
 	if (!dashboardRoom) return;
 	const payload = JSON.stringify({
 		event: eventDescription,
@@ -179,4 +178,73 @@ const cleanRooms = (ws: ExtendedWebSocket) => {
 		room.delete(ws);
 		if (room.size === 0) tenantDashboardRooms.delete(ws.tenantId);
 	}
+};
+
+//Helper 4: Handle real-time status updates for conversation handoff and assignment changes.
+// Add this alongside your handleIncomingMessage helper in services/socket.service.ts
+
+const handleStatusUpdate = async (ws: ExtendedWebSocket, data: any) => {
+	const { tenantId, conversationId, status, aiHandled, assignedTo } = data;
+
+	// 1. Build an incremental atomic update payload
+	const updatePayload: Record<string, any> = { updatedAt: new Date() };
+
+	if (status) updatePayload.status = status;
+	if (aiHandled !== undefined) updatePayload.aiHandled = aiHandled;
+	if (assignedTo !== undefined) updatePayload.assignedTo = assignedTo;
+
+	// 2. Fetch current state first to verify our analytics hook requirements
+	const currentConversation = await Conversation.findById(conversationId).lean();
+	if (!currentConversation) return;
+
+	// ANALYTICS TRIGGER: If a human is taking over for the very first time, lock the timestamp
+	if (aiHandled === false && !currentConversation.wasFirstHandledByHumanAt && !currentConversation.assignedTo) {
+		updatePayload.wasFirstHandledByHumanAt = new Date();
+	}
+
+	// 3. Persist the state alterations to MongoDB
+	const updatedConversation = await Conversation.findByIdAndUpdate(
+		conversationId,
+		{ $set: updatePayload },
+		{ new: true },
+	);
+
+	// 4. Locate the last message string to fulfill your strict ActualData type mapping
+	const lastMessageDoc = await Message.findOne({ conversationId }).sort({ createdAt: -1 }).select("text").lean();
+
+	const resolvedLastMessage = lastMessageDoc?.text || "Conversation status updated.";
+
+	// 5. Structure the packet exactly to fit your strict ActualData interface specifications
+	const dashboardBroadcastPayload: ActualData = {
+		conversationId,
+		lastMessage: resolvedLastMessage,
+		assignedTo: updatedConversation?.assignedTo,
+	};
+
+	// 6. Broadcast changes across all active channels
+	// Alert the workspace dashboard console layout to move tabs or update badges instantly
+	broadcastToDashboardRoom(tenantId, "conversation_activity", dashboardBroadcastPayload);
+
+	// If an agent changes settings, emit a silent update event over the raw customer room
+	// so the client widget UI knows whether to hide/show typing indicators or agent profiles
+	const chatRoom = conversationRooms.get(conversationId);
+	if (chatRoom) {
+		chatRoom.forEach((client) => {
+			if (client.readyState === WebSocket.OPEN) {
+				client.send(
+					JSON.stringify({
+						event: "conversation_settings_changed",
+						data: {
+							status: updatedConversation?.status,
+							aiHandled: updatedConversation?.aiHandled,
+						},
+					}),
+				);
+			}
+		});
+	}
+
+	console.log(
+		`Live Status Sync: Conversation ${conversationId} updated. AI Handled: ${updatedConversation?.aiHandled}`,
+	);
 };

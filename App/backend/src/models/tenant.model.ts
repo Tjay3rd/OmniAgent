@@ -6,7 +6,9 @@ interface ITenant {
 	subdomain: string;
 	stripeCustomerId?: string;
 	subscriptionId?: string;
-	subscriptionStatus: "active" | "incomplete" | "cancelled";
+	subscriptionStatus: "active" | "trialing" | "past_due" | "unpaid" | "inactive" | "cancelling";
+	subscriptionPeriodStart?: Date;
+	subscriptionPeriodEnd?: Date;
 }
 
 const tenantSchema = new Schema<ITenant>(
@@ -16,7 +18,13 @@ const tenantSchema = new Schema<ITenant>(
 		subdomain: { type: String, required: true, unique: true, lowercase: true, trim: true },
 		stripeCustomerId: { type: String, required: true, sparse: true },
 		subscriptionId: { type: String },
-		subscriptionStatus: { type: String, enum: ["active", "incomplete", "cancelled"], default: "incomplete" },
+		subscriptionStatus: {
+			type: String,
+			enum: ["active", "trialing", "past_due", "unpaid", "inactive", "cancelling"],
+			default: "inactive",
+		},
+		subscriptionPeriodStart: { type: Date },
+		subscriptionPeriodEnd: { type: Date },
 	},
 	{ timestamps: true },
 );
