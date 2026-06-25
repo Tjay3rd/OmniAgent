@@ -23,7 +23,7 @@ initWebSocketServer(wss);
 // 2. Standard Cross-Origin Resource Sharing Rules
 app.use(
 	cors({
-		origin: env.FRONTEND_URL || "http://localhost:3000",
+		origin: env.FRONTEND_URL || "http://localhost:5000",
 		credentials: true,
 	}),
 );
