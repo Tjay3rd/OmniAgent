@@ -3,6 +3,7 @@ import Message from "../models/chatMessage.model.js";
 import Conversation from "../models/chatConversation.model.js";
 import { generateAgentResponseStream } from "./ai.service.js";
 import { ObjectId } from "mongoose";
+import { assignedToSchema } from "../validation/auth.zod.js";
 
 // Custom type extension to store session metadata directly on the socket object
 interface ExtendedWebSocket extends WebSocket {
@@ -184,17 +185,41 @@ const cleanRooms = (ws: ExtendedWebSocket) => {
 // Add this alongside your handleIncomingMessage helper in services/socket.service.ts
 
 const handleStatusUpdate = async (ws: ExtendedWebSocket, data: any) => {
-	const { tenantId, conversationId, status, aiHandled, assignedTo } = data;
+	const { conversationId, status, aiHandled, assignedTo } = data;
+	const tenantId = ws.tenantId;
+	if (!tenantId) {
+		ws.send(JSON.stringify({ error: "Unauthorized socket tenant context" }));
+		return;
+	}
 
 	// 1. Build an incremental atomic update payload
 	const updatePayload: Record<string, any> = { updatedAt: new Date() };
 
-	if (status) updatePayload.status = status;
-	if (aiHandled !== undefined) updatePayload.aiHandled = aiHandled;
-	if (assignedTo !== undefined) updatePayload.assignedTo = assignedTo;
+	if (status !== undefined) {
+		if (!["open", "snoozed", "closed"].includes(status)) {
+			ws.send(JSON.stringify({ error: "Invalid conversation status" }));
+			return;
+		}
+		updatePayload.status = status;
+	}
+	if (aiHandled !== undefined) {
+		if (typeof aiHandled !== "boolean") {
+			ws.send(JSON.stringify({ error: "Invalid aiHandled value" }));
+			return;
+		}
+		updatePayload.aiHandled = aiHandled;
+	}
+	if (assignedTo !== undefined) {
+		const parsed = assignedToSchema.safeParse(assignedTo);
+		if (!parsed.success) {
+			ws.send(JSON.stringify({ error: "Invalid assignedTo value" }));
+			return;
+		}
+		updatePayload.assignedTo = assignedTo;
+	}
 
 	// 2. Fetch current state first to verify our analytics hook requirements
-	const currentConversation = await Conversation.findById(conversationId).lean();
+	const currentConversation = await Conversation.findOne({ _id: conversationId, tenantId }).lean();
 	if (!currentConversation) return;
 
 	// ANALYTICS TRIGGER: If a human is taking over for the very first time, lock the timestamp
@@ -204,10 +229,12 @@ const handleStatusUpdate = async (ws: ExtendedWebSocket, data: any) => {
 
 	// 3. Persist the state alterations to MongoDB
 	const updatedConversation = await Conversation.findByIdAndUpdate(
-		conversationId,
+		{ _id: conversationId, tenantId },
 		{ $set: updatePayload },
 		{ new: true },
 	);
+
+	if (!updatedConversation) return;
 
 	// 4. Locate the last message string to fulfill your strict ActualData type mapping
 	const lastMessageDoc = await Message.findOne({ conversationId }).sort({ createdAt: -1 }).select("text").lean();

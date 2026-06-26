@@ -32,9 +32,6 @@ const processedWebhookSchema = new Schema<IProcessedWebhook>(
 	},
 );
 
-// High-speed index lookup for our idempotency gatekeeper checks
-processedWebhookSchema.index({ eventId: 1 });
-
 // Time-To-Live (TTL) Index: Automatically deletes webhook records after 7 days
 // This keeps your database lightweight since old webhook IDs are highly unlikely to be retried.
 processedWebhookSchema.index({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 7 });

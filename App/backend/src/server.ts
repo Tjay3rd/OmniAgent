@@ -4,6 +4,7 @@ import { WebSocketServer } from "ws";
 import mongoose from "mongoose";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import helmet from "helmet";
 // Service & Router Core Hooks
 import { initWebSocketServer } from "./services/socket.service.js";
 import webhookRouter from "./routes/webhook.routes.js";
@@ -20,40 +21,46 @@ app.set("trust proxy", 1);
 const wss = new WebSocketServer({ server: httpServer });
 initWebSocketServer(wss);
 
-// 2. Standard Cross-Origin Resource Sharing Rules
+// 2. standard security headers (CSP, HSTS, X-Content-Type-Options, etc.).
+app.use(helmet());
+
+// 3. Standard Cross-Origin Resource Sharing Rules
 app.use(
 	cors({
-		origin: env.FRONTEND_URL || "http://localhost:5000",
+		origin: env.FRONTEND_URL,
 		credentials: true,
 	}),
 );
 
-// 3. MOUNT STRIPE WEBHOOK ROUTE FIRST
+// 4. MOUNT STRIPE WEBHOOK ROUTE FIRST
 // This ensures raw stream buffers are captured before global body-parsers parse the text stream
 app.use("/api/webhooks", webhookRouter);
 
-// 4. Global Request Utility Parsers
+// 5. Global Request Utility Parsers
 app.use(express.json());
 app.use(cookieParser());
 
-// 5. System Route Matrix Registrations
+// 6. System Route Matrix Registrations
 app.use("/api/admin", adminRouter);
 app.use("/api/dashboard", dashboardRouter);
+app.use("/api/widget", dashboardRouter); // Assuming widget routes are handled in the same router for now
 
-// 6. Centralized Production Error Capture Handler
+// 7. Centralized Production Error Capture Handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
 	console.error("Centralized System Failure Captured:", err);
 
 	const status = err.statusCode || 500;
+	const isOperational = status >= 400 && status < 500;
+
 	const responsePayload = {
-		error: err.message || "An unexpected system internal exception occurred.",
+		error: isOperational ? err.message : "An unexpected internal error occurred. " + "Please try again later.",
 		...(env.NODE_ENV === "development" && { stack: err.stack }),
 	};
 
 	res.status(status).json(responsePayload);
 });
 
-// 7. Database Connection Guard & Startup Sequence
+// 8. Database Connection Guard & Startup Sequence
 const startServer = async () => {
 	try {
 		mongoose.set("strictQuery", true);

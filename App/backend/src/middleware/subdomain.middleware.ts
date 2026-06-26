@@ -27,7 +27,9 @@ export const extractSubdomain = async (req: Request, res: Response, next: NextFu
 		// Look up who this subdomain belongs to
 		const tenant = await Tenant.findOne({ subdomain: subdomainStr });
 		if (!tenant) {
-			return res.status(404).json({ error: "Workspace workspace does not exist." });
+			return res
+				.status(404)
+				.json({ error: "Either workspace does not exist or workspace doesnt match with authenticated user." });
 		}
 
 		// Attach the verified tenant database object to the request lifecycle

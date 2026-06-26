@@ -19,7 +19,10 @@ export const getWorkspaceConversations = async (req: Request, res: Response, nex
 		}
 
 		// Leveraging the high-speed compound index { tenantId: 1, status: 1, updatedAt: -1 } you built!
-		const conversations = await Conversation.find(query).sort({ updatedAt: -1 }).lean();
+
+		const requestedLimit = Number(req.query.limit);
+		const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 50;
+		const conversations = await Conversation.find(query).sort({ updatedAt: -1 }).limit(limit).lean();
 
 		return res.status(200).json({ conversations });
 	} catch (error) {

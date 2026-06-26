@@ -7,7 +7,7 @@ import {
 	getConversationMessages,
 	humanTakeoverHandler,
 } from "../controllers/widget.controller.js";
-import { requireAuth } from "../middleware/auth&auth.mid.js";
+import { requireAuth, restrictTo } from "../middleware/auth&auth.mid.js";
 
 const widgetRouter = Router();
 
@@ -25,6 +25,11 @@ widgetRouter.get("/chat/:conversationId/messages", getConversationMessages);
 
 // --- PROTECTED INTER-SERVICE ENDPOINTS ---
 // The manual AI-mute function requires an agent token, so we place it safely below the guard
-widgetRouter.patch("/chat/:conversationId/takeover", requireAuth, humanTakeoverHandler);
+widgetRouter.patch(
+	"/chat/:conversationId/takeover",
+	requireAuth,
+	restrictTo("owner", "admin", "agent"),
+	humanTakeoverHandler,
+);
 
 export default widgetRouter;

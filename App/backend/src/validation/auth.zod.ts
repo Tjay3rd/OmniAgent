@@ -44,7 +44,6 @@ export const loginSchema = z.object({
 });
 
 export const agentConfigSchema = z.object({
-	tenantId: z.string().regex(/^[0-9a-fA-F]{24}$/, "Invalid workspace database format."),
 	systemPrompt: z.string().min(10).max(500).trim(),
 	temperature: z.number().min(0).max(1),
 	modelProvider: z.string().min(2).max(60).trim(),
@@ -61,4 +60,8 @@ export const acceptInviteSchema = z.object({
 export const createInviteSchema = z.object({
 	email: z.email("Invalid email address format.").toLowerCase().trim(),
 	role: z.enum(["admin", "agent"], "Role must be either 'admin' or 'agent'."),
+});
+
+export const assignedToSchema = z.object({
+	assignedTo: z.string().regex(/^[0-9a-fA-F]{24}$/, "Invalid assignedTo value."),
 });

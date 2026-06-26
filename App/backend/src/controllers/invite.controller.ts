@@ -67,17 +67,6 @@ export const createInviteHandler = async (req: Request, res: Response, next: Nex
 			return res.status(400).json({ error: "Invitee email address and organizational role are required." });
 		}
 
-		// 1. Check if a pending invitation already exists for this email within this tenant to avoid duplicates
-		const existingInvite = await Invite.findOne({ tenantId, email: email.toLowerCase().trim() });
-		if (existingInvite) {
-			// If it's expired, clear it out so we can issue a fresh one
-			if (existingInvite.expiresAt.getTime() < Date.now()) {
-				await existingInvite.deleteOne();
-			} else {
-				return res.status(409).json({ error: "An active pending invitation has already been sent to this employee." });
-			}
-		}
-
 		// 2. Generate a secure, unique invitation tracking key
 		const uniqueToken = uuidv4();
 
@@ -85,24 +74,33 @@ export const createInviteHandler = async (req: Request, res: Response, next: Nex
 		const expirationDate = new Date();
 		expirationDate.setDate(expirationDate.getDate() + 7);
 
-		// 4. Save the document into MongoDB
-		const newInvite = await Invite.create({
-			tenantId,
-			email: email.toLowerCase().trim(),
-			role,
-			token: uniqueToken,
-			expiresAt: expirationDate,
-		});
+		// Atomic Operation: Find an EXPIRED invite and overwrite it, OR create a new one if it doesn't exist.
+		// If an ACTIVE invite exists, this query condition will fail to match, preventing a overwrite.
+		const newInvite = await Invite.findOneAndUpdate(
+			{
+				tenantId,
+				email: email.toLowerCase().trim(),
+				$or: [{ expiresAt: { $lt: new Date() } }], // Matches if it's expired
+			},
+			{ $set: { role, token: uniqueToken, expiresAt: expirationDate } },
+			{
+				upsert: true, // If no document matches the query, create a new one safely
+				new: false, // Return the document BEFORE the update so we can see if it was an upsert
+				rawResult: true, // Gives us access to MongoDB's internal execution metadata flags
+			},
+		);
+		// If 'lastErrorObject.updatedExisting' is true, it means we found an expired record and overwrote it.
+		// If it's false, MongoDB safely created a brand new record because none existed.
 
 		return res.status(201).json({
 			message: "Secure invitation record generated successfully.",
-			inviteLink: `https://${req.hostname}/invite/accept?token=${uniqueToken}`, // Formatted for your dynamic subdomains
+			inviteLink: `${process.env.FRONTEND_URL}/invite/accept?token=${uniqueToken}`, // Formatted for your dynamic subdomains
 			invite: {
-				id: newInvite._id,
-				email: newInvite.email,
-				role: newInvite.role,
-				token: newInvite.token,
-				expiresAt: newInvite.expiresAt,
+				id: newInvite?._id,
+				email: newInvite?.email,
+				role: newInvite?.role,
+				token: newInvite?.token,
+				expiresAt: newInvite?.expiresAt,
 			},
 		});
 	} catch (error) {

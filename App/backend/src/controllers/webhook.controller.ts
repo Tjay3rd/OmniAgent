@@ -31,27 +31,27 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 
 	const existingEvent = await ProcessedWebhook.findOne({ eventId: event.id });
 
-	if (existingEvent) {
+	if (existingEvent?.status === "completed") {
 		// Already handled — acknowledge Stripe and bail early
 		return res.status(200).json({ received: true });
 	}
 
+	// use upsert instead of create so a retry on a "failed" record resets it to "processing" rather than hitting a duplicate-key error (11000).
 	try {
-		// 1. ATTEMPT GUARD INSERTION: Try to create a record of this event instantly
-		// Because eventId is marked 'unique: true', MongoDB will throw a duplicate key error (11000) if it already exists.
-		await ProcessedWebhook.create({
-			eventId: event.id,
-			provider: "stripe",
-			status: "processing",
-		});
+		await ProcessedWebhook.findOneAndUpdate(
+			{ eventId: event.id },
+			{ $set: { provider: "stripe", status: "processing" } },
+			{ upsert: true },
+		);
 	} catch (err: any) {
 		if (err.code === 11000) {
-			// Conflict caught! This event is already processing or has already completed.
-			console.warn(`Idempotency Blocked: Webhook event ${event.id} already received. Skipping processing.`);
-			return res.status(200).json({ received: true, duplicate: true }); // Return 200 so Stripe stops retrying
+			// Race condition: another instance beat us to the upsert. Safe to bail — it will handle this event.
+			console.warn(`Idempotency race blocked: ${event.id}`);
+			return res.status(200).json({ received: true, duplicate: true });
 		}
-		throw err; // Pass any other database errors up
+		throw err; //pass any other database errors up
 	}
+
 	// Handle the target subscription lifecycle events
 	try {
 		switch (event.type) {
@@ -68,7 +68,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 							subscriptionPeriodStart: new Date(session.created * 1000),
 							subscriptionStatus: "active",
 							stripeCustomerId,
-							stripeSubscriptionId: subscriptionId,
+							subscriptionId: subscriptionId,
 						},
 					});
 				}
@@ -93,14 +93,16 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 
 				const isCancelingAtPeriodEnd = subscription.status === "active" && subscription.cancel_at_period_end === true;
 
-				const resolvedStatus = isCancelingAtPeriodEnd ? "canceling" : (statusMap[subscription.status] ?? "inactive");
+				const resolvedStatus = isCancelingAtPeriodEnd ? "cancelling" : (statusMap[subscription.status] ?? "inactive");
 
 				await Tenant.findOneAndUpdate(
 					{ stripeCustomerId },
 					{
 						$set: {
 							subscriptionStatus: resolvedStatus,
-							subscriptionPeriodEnd: new Date(subscription.items?.data[0].current_period_end * 1000),
+							subscriptionPeriodEnd: subscription.items?.data?.[0]?.current_period_end
+								? new Date(subscription.items.data[0].current_period_end * 1000)
+								: null,
 						},
 					},
 				);
@@ -127,7 +129,14 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 		// Return a clean 200 OK block to acknowledge safe processing receipt to Stripe's servers
 		return res.status(200).json({ received: true });
 	} catch (dbError) {
-		console.error("Database status sync failure inside webhook execution:", dbError);
+		console.error("Database sync failure inside webhook execution:", dbError);
+
+		// FIX: mark as "failed" so Stripe's retry finds no
+		// "completed" record and falls through the early-bail
+		// check above to reprocess it.
+		await ProcessedWebhook.findOneAndUpdate({ eventId: event.id }, { status: "failed" }).catch((markErr) => {
+			console.error("Could not mark webhook as failed:", markErr);
+		});
 		return res.status(500).json({ error: "Internal processing error hook breakdown." });
 	}
 };
