@@ -29,7 +29,7 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 					companyName,
 					email, // The billing/contact email for the business
 					subdomain,
-					subscriptionStatus: "incomplete", // Becomes active after Stripe checkout
+					subscriptionStatus: "inactive", // Becomes active after Stripe checkout
 				},
 			],
 			{ session },

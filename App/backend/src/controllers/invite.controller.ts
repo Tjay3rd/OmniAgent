@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import Invite from "../models/invite.model.js";
 import User from "../models/user.model.js";
 import { signTokenAndSetCookies } from "../lib/jwt.js";
+import { v4 as uuidv4 } from "uuid";
 
 export const acceptInviteHandler = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {
@@ -51,6 +52,56 @@ export const acceptInviteHandler = async (req: Request, res: Response, next: Nex
 		return res.status(201).json({
 			message: "Employee profile deployed and workspace session authenticated.",
 			user: cleanedUser,
+		});
+	} catch (error) {
+		next(error);
+	}
+};
+
+export const createInviteHandler = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+	try {
+		const tenantId = req.user?.tenantId; // Injected via requireAuth middleware
+		const { email, role } = req.body;
+
+		if (!email || !role) {
+			return res.status(400).json({ error: "Invitee email address and organizational role are required." });
+		}
+
+		// 2. Generate a secure, unique invitation tracking key
+		const uniqueToken = uuidv4();
+
+		// 3. Establish an explicit expiration window (7 days from right now)
+		const expirationDate = new Date();
+		expirationDate.setDate(expirationDate.getDate() + 7);
+
+		// Atomic Operation: Find an EXPIRED invite and overwrite it, OR create a new one if it doesn't exist.
+		// If an ACTIVE invite exists, this query condition will fail to match, preventing a overwrite.
+		const newInvite = await Invite.findOneAndUpdate(
+			{
+				tenantId,
+				email: email.toLowerCase().trim(),
+				$or: [{ expiresAt: { $lt: new Date() } }], // Matches if it's expired
+			},
+			{ $set: { role, token: uniqueToken, expiresAt: expirationDate } },
+			{
+				upsert: true, // If no document matches the query, create a new one safely
+				new: false, // Return the document BEFORE the update so we can see if it was an upsert
+				rawResult: true, // Gives us access to MongoDB's internal execution metadata flags
+			},
+		);
+		// If 'lastErrorObject.updatedExisting' is true, it means we found an expired record and overwrote it.
+		// If it's false, MongoDB safely created a brand new record because none existed.
+
+		return res.status(201).json({
+			message: "Secure invitation record generated successfully.",
+			inviteLink: `${process.env.FRONTEND_URL}/invite/accept?token=${uniqueToken}`, // Formatted for your dynamic subdomains
+			invite: {
+				id: newInvite?._id,
+				email: newInvite?.email,
+				role: newInvite?.role,
+				token: newInvite?.token,
+				expiresAt: newInvite?.expiresAt,
+			},
 		});
 	} catch (error) {
 		next(error);

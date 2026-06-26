@@ -18,6 +18,7 @@ const inviteSchema = new Schema<IInvite>({
 
 // Automatically delete expired invites out of MongoDB after the expiration date
 inviteSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+inviteSchema.index({ tenantId: 1, email: 1 }, { unique: true });
 
 const Invite = model<IInvite>("Invite", inviteSchema);
 

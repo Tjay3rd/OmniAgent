@@ -42,3 +42,26 @@ export const loginSchema = z.object({
 		.regex(/[0-9]/, "Must contain a number")
 		.regex(/[!@#$%]/, "Must contain a special character"),
 });
+
+export const agentConfigSchema = z.object({
+	systemPrompt: z.string().min(10).max(500).trim(),
+	temperature: z.number().min(0).max(1),
+	modelProvider: z.string().min(2).max(60).trim(),
+	modelName: z.string().min(2).max(60).trim(),
+	isActive: z.boolean(),
+});
+
+export const acceptInviteSchema = z.object({
+	token: z.uuid("Invalid invitation link structure."),
+	name: z.string().min(2, "Full onboarding employee name must be at least 2 characters."),
+	password: z.string().min(8, "Security access password must contain at least 8 characters."),
+});
+
+export const createInviteSchema = z.object({
+	email: z.email("Invalid email address format.").toLowerCase().trim(),
+	role: z.enum(["admin", "agent"], "Role must be either 'admin' or 'agent'."),
+});
+
+export const assignedToSchema = z.object({
+	assignedTo: z.string().regex(/^[0-9a-fA-F]{24}$/, "Invalid assignedTo value."),
+});

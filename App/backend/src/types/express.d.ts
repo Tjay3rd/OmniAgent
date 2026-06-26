@@ -4,7 +4,7 @@ declare global {
 			user?: {
 				id: string;
 				tenantId: string;
-				role: "owner" | "agent";
+				role: "owner" | "admin" | "agent";
 			};
 		}
 	}
