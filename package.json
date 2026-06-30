@@ -18,5 +18,9 @@
 	"type": "commonjs",
 	"devDependencies": {
 		"concurrently": "^9.2.1"
+	},
+	"dependencies": {
+		"@tanstack/react-query": "^5.90.21",
+		"@tanstack/react-query-devtools": "^5.91.3"
 	}
 }
