@@ -3,7 +3,7 @@ import Message from "../models/chatMessage.model.js";
 import Conversation from "../models/chatConversation.model.js";
 import { generateAgentResponseStream } from "./ai.service.js";
 import { ObjectId } from "mongoose";
-import { assignedToSchema } from "../validation/auth.zod.js";
+import { assignedToSchema, messageSchema } from "../validation/socket.zod.js";
 
 // Custom type extension to store session metadata directly on the socket object
 interface ExtendedWebSocket extends WebSocket {
@@ -16,6 +16,15 @@ export interface ActualData {
 	conversationId: string;
 	lastMessage: string;
 	assignedTo: ObjectId | undefined;
+}
+
+interface MessageData {
+	tenantId: string;
+	conversationId: string;
+	senderType: string;
+	senderId: string;
+	text: string;
+	tempId: string;
 }
 
 // In-memory Room structures replacing Socket.io namespaces
@@ -94,8 +103,13 @@ export const initWebSocketServer = (wss: WebSocketServer) => {
 
 //HELPER FUNCTIONS
 // Helper 1: Database persistent engine & client broadcasting
-const handleIncomingMessage = async (ws: ExtendedWebSocket, data: any) => {
-	const { tenantId, conversationId, senderType, text, senderId } = data;
+const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) => {
+	const parsed = messageSchema.safeParse(data);
+	if (!parsed.success) {
+		ws.send(JSON.stringify({ error: "Invalid payload data" }));
+		return;
+	}
+	const { tenantId, conversationId, senderType, text, senderId } = parsed.data;
 
 	// 1. Commit message directly into MongoDB
 	const newMessage = await Message.create({
@@ -118,7 +132,7 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: any) => {
 
 	const stringifiedPayload = JSON.stringify({
 		event: "new_message",
-		data: newMessage,
+		data: { ...newMessage.toObject(), tempId: data.tempId },
 	});
 
 	// 3. Broadcast to all matching socket pipes in this Conversation room so all the paricipants of the conversation can see the new message immediately.
@@ -215,7 +229,7 @@ const handleStatusUpdate = async (ws: ExtendedWebSocket, data: any) => {
 			ws.send(JSON.stringify({ error: "Invalid assignedTo value" }));
 			return;
 		}
-		updatePayload.assignedTo = assignedTo;
+		updatePayload.assignedTo = parsed.data;
 	}
 
 	// 2. Fetch current state first to verify our analytics hook requirements
@@ -262,6 +276,7 @@ const handleStatusUpdate = async (ws: ExtendedWebSocket, data: any) => {
 					JSON.stringify({
 						event: "conversation_settings_changed",
 						data: {
+							conversationId: updatedConversation?._id,
 							status: updatedConversation?.status,
 							aiHandled: updatedConversation?.aiHandled,
 						},

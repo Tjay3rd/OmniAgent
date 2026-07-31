@@ -3,6 +3,7 @@ import stripeFramework from "stripe";
 import Tenant from "../models/tenant.model.js";
 import { env } from "../validation/env.zod.js";
 import ProcessedWebhook from "../models/processedWebhook.model.js";
+import { Tier } from "../types/express.js";
 
 // Initialize Stripe instance with your secure backend environment token
 const stripe = new stripeFramework(env.STRIPE_SECRET_KEY || "");
@@ -25,10 +26,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 		return res.status(400).send(`Webhook Error: ${err.message}`);
 	}
 
-	if (!event.livemode && env.NODE_ENV === "production") {
-		return res.status(200).json({ received: true }); // ignore silently
-	}
-
+	//Addressing Idempotency
 	const existingEvent = await ProcessedWebhook.findOne({ eventId: event.id });
 
 	if (existingEvent?.status === "completed") {
@@ -36,7 +34,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 		return res.status(200).json({ received: true });
 	}
 
-	// use upsert instead of create so a retry on a "failed" record resets it to "processing" rather than hitting a duplicate-key error (11000).
+	// use upsert instead of create so a RETRY on a status -"failed" record resets it to status - "processing" rather than hitting a duplicate-key error (11000).
 	try {
 		await ProcessedWebhook.findOneAndUpdate(
 			{ eventId: event.id },
@@ -75,7 +73,34 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 				break;
 			}
 
-			// Case B: Monthly automated payment clears or updates
+			case "customer.subscription.created": {
+				const subscription = event.data.object as stripeFramework.Subscription;
+				const tenantId = subscription.metadata?.tenantId; // Extract metadata passed during checkout configuration
+				const subscriptionPriceId = subscription.items?.data?.[0]?.price?.id as string;
+
+				if (tenantId && subscriptionPriceId) {
+					function customerPlan(subscriptionPriceId: string) {
+						return subscriptionPriceId === env.STRIPE_PRICE_STARTER
+							? "starter"
+							: subscriptionPriceId === env.STRIPE_PRICE_PRODUCTION
+								? "production"
+								: null;
+					}
+					const plan: Tier | null = customerPlan(subscriptionPriceId);
+
+					if (!plan) throw new Error("Price Id doesnt match any known plans");
+
+					await Tenant.findByIdAndUpdate(tenantId, {
+						$set: {
+							subscriptionPriceId,
+							plan,
+						},
+					});
+				}
+				break;
+			}
+
+			// Case B: Monthly recurring automated payment clears or updates
 			case "customer.subscription.updated": {
 				const subscription = event.data.object as stripeFramework.Subscription;
 				const stripeCustomerId = subscription.customer as string;
@@ -130,10 +155,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 		return res.status(200).json({ received: true });
 	} catch (dbError) {
 		console.error("Database sync failure inside webhook execution:", dbError);
-
-		// FIX: mark as "failed" so Stripe's retry finds no
-		// "completed" record and falls through the early-bail
-		// check above to reprocess it.
+		// FIX: mark as "failed" so Stripe's retry finds no "completed" record and falls through the early-bail check above to reprocess it.
 		await ProcessedWebhook.findOneAndUpdate({ eventId: event.id }, { status: "failed" }).catch((markErr) => {
 			console.error("Could not mark webhook as failed:", markErr);
 		});

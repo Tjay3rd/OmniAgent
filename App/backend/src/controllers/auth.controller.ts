@@ -2,8 +2,16 @@ import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 import RefreshToken from "../models/refreshToken.model.js";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import { env } from "../validation/env.zod.js";
-import { signTokenAndSetCookies } from "../lib/jwt.js";
+import {
+	signTokenAndSetCookies,
+	ACCESS_TOKEN_TTL_MS,
+	IDLE_WINDOW_MS,
+	baseOptions,
+	hashToken,
+	refreshPath,
+} from "../lib/jwt.js";
 import { Request, Response, NextFunction } from "express";
 import User from "../models/user.model.js";
 import Tenant from "../models/tenant.model.js";
@@ -11,11 +19,15 @@ import Tenant from "../models/tenant.model.js";
 export const tenantRegistrationHandler = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	const session = await mongoose.startSession();
 	try {
-		const { companyName, name, email, password, subdomain } = req.body;
+		//const ALLOWED_PLANS = ["free", "starter", "production"];
 
-		if (!companyName || !name || !email || !password || !subdomain) {
+		const { companyName, name, email, password, subdomain, plan } = req.body;
+
+		if (!companyName || !name || !email || !password || !subdomain || !plan) {
 			return res.status(400).json({ error: "All fields are required" });
 		}
+
+		//const safePlan = ALLOWED_PLANS.includes(plan) ? plan : "free"; // safe default
 
 		const existingUser = await User.findOne({ email });
 		if (existingUser) {
@@ -29,6 +41,7 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 					companyName,
 					email, // The billing/contact email for the business
 					subdomain,
+					//plan: safePlan, Stripe Webhook is now the single source of truth for all financial data.
 					subscriptionStatus: "inactive", // Becomes active after Stripe checkout
 				},
 			],
@@ -50,6 +63,13 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 		);
 		await session.commitTransaction();
 		session.endSession();
+
+		try {
+			plan === "free" ? (tenant.subscriptionStatus = "trialing") : (tenant.subscriptionStatus = "inactive");
+			await tenant.save();
+		} catch (error) {
+			next(error);
+		}
 
 		await signTokenAndSetCookies(res, {
 			id: user._id.toString(),
@@ -116,13 +136,6 @@ export const loginHandler =
 	};
 
 export const handleTokenRefresh = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
-	const IDLE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days sliding window
-	const baseOptions = {
-		httpOnly: true,
-		secure: env.NODE_ENV === "production",
-		sameSite: "strict" as const,
-	};
-
 	try {
 		const oldRefreshToken = req.cookies.refreshToken;
 		if (!oldRefreshToken) {
@@ -130,7 +143,8 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 		}
 
 		// 1. Find the token string in MongoDB
-		const tokenDoc = await RefreshToken.findOne({ token: oldRefreshToken });
+		const oldTokenHash = hashToken(oldRefreshToken);
+		const tokenDoc = await RefreshToken.findOne({ tokenHash: oldTokenHash });
 
 		// BREACH DETECTED (Case 1): Token not in DB but cookie exists?
 		// Attacker might be reusing a token from a wiped family.
@@ -151,20 +165,10 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 			});
 		}
 
-		// 2. Verify the structural integrity of the JWT token string
-		let decoded: any;
-		try {
-			decoded = jwt.verify(oldRefreshToken, env.JWT_REFRESH_SECRET);
-		} catch (err) {
-			// If token is expired or altered, clear it out safely
-			await tokenDoc.deleteOne();
-			return res.status(401).json({ error: "Session expired" });
-		}
-
 		const now = Date.now();
 		const familyExpiresAt = tokenDoc.familyExpiresAt;
 
-		//3. Hard cap check — family has lived its full life
+		//2. Hard cap check — family has lived its full life
 		if (now >= familyExpiresAt.getTime()) {
 			await RefreshToken.deleteMany({
 				familyId: tokenDoc.familyId,
@@ -177,7 +181,7 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 			});
 		}
 
-		// 4. Mark the current token as used immediately
+		// 3. Mark the current token as used immediately
 		tokenDoc.isUsed = true;
 		await tokenDoc.save();
 
@@ -186,27 +190,22 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 		const newExpiresAt = new Date(Math.min(slidingExpiry, familyExpiresAt.getTime()));
 		const remainingMs = newExpiresAt.getTime() - now;
 
-		// 5. Generate a fresh Token Pair inside the same Family lineage
+		// 4. Generate a fresh access token.
 		const newAccessToken = jwt.sign(
-			{ id: decoded.id, tenantId: decoded.tenantId, role: decoded.role },
+			{ id: tokenDoc.userId, tenantId: tokenDoc.tenantId, role: tokenDoc.role },
 			env.JWT_ACCESS_SECRET,
-			{ expiresIn: "15m" },
+			{ expiresIn: ACCESS_TOKEN_TTL_MS / 1000 },
 		);
 
-		const newRefreshToken = jwt.sign(
-			{
-				id: decoded.id,
-				tenantId: decoded.tenantId,
-				role: decoded.role,
-			},
-			env.JWT_REFRESH_SECRET,
-			{ expiresIn: Math.floor(remainingMs / 1000) },
-		);
+		//5. Generate a fresha opaque refresh token and store it in the DB.
+		const newRawRefreshToken = crypto.randomBytes(64).toString("hex");
+		const newRefreshTokenHash = hashToken(newRawRefreshToken);
 
 		await RefreshToken.create({
-			userId: decoded.id,
-			tenantId: decoded.tenantId,
-			token: newRefreshToken,
+			userId: tokenDoc.userId,
+			tenantId: tokenDoc.tenantId,
+			role: tokenDoc.role,
+			tokenHash: newRefreshTokenHash,
 			familyId: tokenDoc.familyId,
 			familyExpiresAt: familyExpiresAt, // never changes
 			isUsed: false,
@@ -218,12 +217,12 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 		res.cookie("accessToken", newAccessToken, {
 			...baseOptions,
 			path: "/",
-			maxAge: 15 * 60 * 1000, // 15 Minutes
+			maxAge: ACCESS_TOKEN_TTL_MS, // 45 Minutes
 		});
 
-		res.cookie("refreshToken", newRefreshToken, {
+		res.cookie("refreshToken", newRawRefreshToken, {
 			...baseOptions,
-			path: "/api/refresh",
+			path: refreshPath,
 			maxAge: remainingMs,
 		});
 
@@ -236,10 +235,19 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 export const handleLogout = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {
 		const refreshToken = req.cookies.refreshToken;
+		const { nukeEverywhere } = req.body; // boolean flag from the client
 
 		// If the browser has a refresh token cookie, pull it out of our database whitelist
 		if (refreshToken) {
-			await RefreshToken.deleteOne({ token: refreshToken });
+			const tokenDoc = await RefreshToken.findOne({ tokenHash: hashToken(refreshToken) });
+
+			if (tokenDoc) {
+				if (nukeEverywhere) {
+					await RefreshToken.deleteMany({ userId: tokenDoc.userId });
+				} else {
+					await RefreshToken.deleteOne({ id: tokenDoc._id });
+				}
+			}
 		}
 
 		// Clear both httpOnly cookies immediately from the user's browser storage
@@ -260,7 +268,9 @@ export const handleLogout = async (req: Request, res: Response, next: NextFuncti
 		});
 
 		return res.status(200).json({
-			message: "Logged out successfully. Session tokens wiped.",
+			message: nukeEverywhere
+				? "Logged out and completely wiped out all sessions altogether."
+				: "Logged out of current session and all current session tokens wiped out.",
 		});
 	} catch (error) {
 		next(error);

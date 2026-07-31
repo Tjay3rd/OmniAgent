@@ -1,36 +1,31 @@
 import jwt from "jsonwebtoken";
 import { env } from "../validation/env.zod.js";
+import crypto from "crypto";
 import { Response } from "express";
 import RefreshToken from "../models/refreshToken.model.js";
 import { v4 as uuidv4 } from "uuid";
 
 const FAMILY_MAX_MS = 90 * 24 * 60 * 60 * 1000; // 90 day hard cap
-const IDLE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-
-export const signToken = (payload: Record<string, string>) => {
-	const accessToken = jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
-	const refreshToken = jwt.sign(payload, env.JWT_REFRESH_SECRET, {
-		expiresIn: Math.floor(IDLE_WINDOW_MS / 1000), // 30d
-	});
-	return { accessToken, refreshToken };
+export const refreshPath = "/api/refresh"; // The only endpoint that can set the refresh cookie
+export const ACCESS_TOKEN_TTL_MS = 45 * 60 * 1000; // 45 minutes
+export const IDLE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+export const hashToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
+export const baseOptions = {
+	httpOnly: true,
+	secure: env.NODE_ENV === "production",
+	sameSite: "strict" as const,
 };
 
 export const setTokenCookies = async (res: Response, accessToken: string, refreshToken: string) => {
-	const baseOptions = {
-		httpOnly: true,
-		secure: env.NODE_ENV === "production",
-		sameSite: "strict" as const,
-	};
-
 	res.cookie("accessToken", accessToken, {
 		...baseOptions,
 		path: "/",
-		maxAge: 15 * 60 * 1000, // 15min.
+		maxAge: ACCESS_TOKEN_TTL_MS, // 45 minutes
 	});
 
 	res.cookie("refreshToken", refreshToken, {
 		...baseOptions,
-		path: "/api/refresh",
+		path: refreshPath,
 		maxAge: IDLE_WINDOW_MS, // 30 days (first window)
 	});
 };
@@ -44,17 +39,21 @@ export const signTokenAndSetCookies = async (
 	const familyExpiresAt = new Date(now + FAMILY_MAX_MS); // hard ceiling.
 	const idleExpiresAt = new Date(now + IDLE_WINDOW_MS); // first idle window.
 
-	const { accessToken, refreshToken } = await signToken(payload);
-	await setTokenCookies(res, accessToken, refreshToken);
+	const rawRefreshToken = crypto.randomBytes(64).toString("hex");
+	const refreshTokenHash = hashToken(rawRefreshToken);
 
-	// Persist the root token of this new family
+	const accessToken = jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: ACCESS_TOKEN_TTL_MS / 1000 });
+
 	await RefreshToken.create({
 		userId: payload.id,
 		tenantId: payload.tenantId,
-		token: refreshToken,
-		familyId,
-		familyExpiresAt, // never changes for this family
+		role: payload.role,
+		tokenHash: refreshTokenHash,
+		familyId: familyId,
+		familyExpiresAt: familyExpiresAt, // never changes
 		isUsed: false,
-		expiresAt: idleExpiresAt,
+		expiresAt: idleExpiresAt, // slides forward each time
 	});
+
+	await setTokenCookies(res, accessToken, rawRefreshToken);
 };

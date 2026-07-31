@@ -5,13 +5,16 @@ import mongoose from "mongoose";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
+import { Request, Response, NextFunction } from "express";
 // Service & Router Core Hooks
 import { initWebSocketServer } from "./services/socket.service.js";
 import webhookRouter from "./routes/webhook.routes.js";
 import adminRouter from "./routes/admin.routes.js";
 import dashboardRouter from "./routes/dashboard.routes.js";
+import billingRouter from "./routes/billing.routes.js";
 // Environment Configuration Validation
 import { env } from "./validation/env.zod.js";
+import widgetRouter from "./routes/widget.routes.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -32,7 +35,7 @@ app.use(
 	}),
 );
 
-// 4. MOUNT STRIPE WEBHOOK ROUTE FIRST
+// 4. MOUNT STRIPE WEBHOOK ROUTE FIRST.
 // This ensures raw stream buffers are captured before global body-parsers parse the text stream
 app.use("/api/webhooks", webhookRouter);
 
@@ -43,10 +46,12 @@ app.use(cookieParser());
 // 6. System Route Matrix Registrations
 app.use("/api/admin", adminRouter);
 app.use("/api/dashboard", dashboardRouter);
-app.use("/api/widget", dashboardRouter); // Assuming widget routes are handled in the same router for now
+app.use("/api/widget", widgetRouter);
+app.use("/api/billing", billingRouter);
 
 // 7. Centralized Production Error Capture Handler
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 	console.error("Centralized System Failure Captured:", err);
 
 	const status = err.statusCode || 500;

@@ -1,12 +1,14 @@
 import axios from "axios";
+import { toast } from "react-hot-toast";
 
 interface FailedRequest {
-	resolve: (token: string) => void;
 	reject: (error: unknown) => void;
+	resolve: () => void;
 }
 
 export const api = axios.create({
-	baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api",
+	baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000",
+	timeout: 10000, // 10 seconds
 	withCredentials: true, // Crucial for sending and receiving httpOnly cookies
 	headers: {
 		"Content-Type": "application/json",
@@ -17,14 +19,12 @@ export const api = axios.create({
 let isRefreshing = false;
 let failedQueue: FailedRequest[] = [];
 
-const processQueue = (error: unknown, token: string | null = null) => {
+const processQueue = (error: unknown) => {
 	failedQueue.forEach((prom) => {
 		if (error) {
 			prom.reject(error);
-		} else if (token) {
-			prom.resolve(token);
 		} else {
-			prom.reject(new Error("Failed to refresh token"));
+			prom.resolve();
 		}
 	});
 	failedQueue = [];
@@ -38,7 +38,7 @@ api.interceptors.response.use(
 		// If the error is a 401 and we haven't retried this request yet
 		if (error.response?.status === 401 && !originalRequest._retry) {
 			if (isRefreshing) {
-				return new Promise((resolve, reject) => {
+				return new Promise<void>((resolve, reject) => {
 					failedQueue.push({ resolve, reject });
 				})
 					.then(() => api(originalRequest))
@@ -50,17 +50,27 @@ api.interceptors.response.use(
 
 			try {
 				// Hit your token rotation endpoint on the backend
-				await axios.post(`${api.defaults.baseURL}/admin/refresh`, {}, { withCredentials: true });
+				await api.post("/api/admin/refresh", {});
 
 				processQueue(null);
 				return api(originalRequest);
 			} catch (refreshError) {
-				processQueue(refreshError, null);
+				processQueue(refreshError);
 				// If the refresh token family is dead or expired, boot them to login
 				window.location.href = "/login";
 				return Promise.reject(refreshError);
 			} finally {
 				isRefreshing = false;
+			}
+		}
+
+		if (error.response) {
+			// Global handler for generic backend failures
+			if (error.response.status === 500) {
+				toast.error("Internal Server Error. Please try again later.");
+			}
+			if (error.response.status === 403) {
+				toast.error("You do not have permission to perform this action.");
 			}
 		}
 

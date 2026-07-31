@@ -1,7 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
-import { api } from "../lib/api.js"; // The interceptor client we mapped out previously
-import { useAuthStore } from "../store/useAuthStore.js";
+import { api } from "../lib/api"; // The interceptor client we mapped out previously
+import { useAuthStore } from "../store/useAuthStore";
 import { useRouter } from "next/navigation";
+import { AxiosError } from "axios";
+import { Tier } from "@/app/register/page";
 
 // Form Submission Type Schemas
 type RegisterInput = {
@@ -10,12 +12,17 @@ type RegisterInput = {
 	email: string;
 	password: string;
 	subdomain: string;
+	plan: Tier;
 };
 
 type LoginInput = {
 	email: string;
 	password: string;
 };
+
+interface BackendErrorResponse {
+	error: string;
+}
 
 //Custom hook that combines our Axios instance, React Query mutations, and our Zustand store updates.
 export const useAuthActions = () => {
@@ -26,22 +33,19 @@ export const useAuthActions = () => {
 	// A. REGISTER MUTATION ENGINE
 	const registerMutation = useMutation({
 		mutationFn: async (data: RegisterInput) => {
-			const response = await api.post("/admin/register", data);
+			const response = await api.post("/api/admin/register", data);
 			return response.data; // This returns the { user, tenant, message } payload from your backend
 		},
 		onSuccess: (data) => {
 			// Hydrate your global Zustand state cleanly in one line
 			setAuth(data.user, data.tenant);
-
-			// Route the fresh owner straight into their operational workspace console
-			router.push("/dashboard");
 		},
 	});
 
 	// B. LOGIN MUTATION ENGINE
 	const loginMutation = useMutation({
 		mutationFn: async (data: LoginInput) => {
-			const response = await api.post("/admin/login", data);
+			const response = await api.post("/api/admin/login", data);
 			return response.data;
 		},
 		onSuccess: (data) => {
@@ -53,7 +57,7 @@ export const useAuthActions = () => {
 	// C. LOGOUT MUTATION ENGINE
 	const logoutMutation = useMutation({
 		mutationFn: async () => {
-			await api.post("/admin/logout");
+			await api.post("/api/admin/logout");
 		},
 		onSuccess: () => {
 			clearAuth();
@@ -61,14 +65,17 @@ export const useAuthActions = () => {
 		},
 	});
 
+	const regError = registerMutation.error as AxiosError<BackendErrorResponse>;
+	const logError = loginMutation.error as AxiosError<BackendErrorResponse>;
+
 	return {
 		register: registerMutation.mutate,
 		isRegistering: registerMutation.isPending,
-		registerError: (registerMutation.error as any)?.response?.data?.error || null,
+		registerError: regError?.response?.data?.error || regError?.message || null,
 
 		login: loginMutation.mutate,
 		isLoggingIn: loginMutation.isPending,
-		loginError: (loginMutation.error as any)?.response?.data?.error || null,
+		loginError: logError?.response?.data?.error || logError?.message || null,
 
 		logout: logoutMutation.mutate,
 	};
