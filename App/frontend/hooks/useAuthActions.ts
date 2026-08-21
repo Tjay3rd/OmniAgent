@@ -3,7 +3,7 @@ import { api } from "../lib/api"; // The interceptor client we mapped out previo
 import { useAuthStore } from "../store/useAuthStore";
 import { useRouter } from "next/navigation";
 import { AxiosError } from "axios";
-import { Tier } from "@/app/register/page";
+import { Tier } from "@/types/nextTypes";
 
 // Form Submission Type Schemas
 type RegisterInput = {

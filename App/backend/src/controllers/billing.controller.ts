@@ -2,8 +2,10 @@ import { Request, Response, NextFunction } from "express";
 import Tenant from "../models/tenant.model.js";
 import Stripe from "stripe";
 import { env } from "../validation/env.zod.js";
+import crypto from "node:crypto";
 
 const stripe = new Stripe(env.STRIPE_SECRET_KEY || "");
+const windowBucket = Math.floor(Date.now() / (5 * 60 * 1000));
 
 export const createCheckoutSession = async (req: Request, res: Response, next: NextFunction) => {
 	try {
@@ -21,19 +23,26 @@ export const createCheckoutSession = async (req: Request, res: Response, next: N
 			return res.status(404).json({ message: "Tenant not found" });
 		}
 
-		const session = await stripe.checkout.sessions.create({
-			mode: "subscription",
-			line_items: [{ price: priceId, quantity: 1 }],
-			success_url: `${env.FRONTEND_URL}/billing?success=true`,
-			cancel_url: `${env.FRONTEND_URL}/billing?canceled=true`,
-			// Reuse existing Stripe customer if we already have one,
-			// so repeat purchases don't fragment into duplicate customers
-			customer: tenant.stripeCustomerId || undefined,
-			metadata: { tenantId },
-			subscription_data: {
+		const idempotencyKey = crypto
+			.createHash("sha256")
+			.update(`checkout:${tenantId}:${priceId}:${windowBucket}`)
+			.digest("hex");
+
+		const session = await stripe.checkout.sessions.create(
+			{
+				mode: "subscription",
+				line_items: [{ price: priceId, quantity: 1 }],
+				success_url: `${env.FRONTEND_URL}/billing?success=true`,
+				cancel_url: `${env.FRONTEND_URL}/billing?canceled=true`,
+				// Reuse existing Stripe customer if we already have one, so repeat purchases don't fragment into duplicate customers
+				customer: tenant.stripeCustomerId || undefined,
 				metadata: { tenantId },
+				subscription_data: {
+					metadata: { tenantId },
+				},
 			},
-		});
+			{ idempotencyKey },
+		);
 
 		res.json({ url: session.url });
 	} catch (error) {

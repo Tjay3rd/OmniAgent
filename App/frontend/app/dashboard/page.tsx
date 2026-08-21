@@ -28,9 +28,12 @@ export default function DashboardPage() {
 
 	useEffect(() => {
 		messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
+	}, [messages, activeConversationId]);
+
+	useEffect(() => {
 		if (!activeConversationId || !isConnected) return;
 		sendMessage("join_conversation", { conversationId: activeConversationId });
-	}, [messages, activeConversationId, isConnected, sendMessage]);
+	}, [activeConversationId, isConnected, sendMessage]);
 
 	// Handle firing a text response out over the network interface
 
@@ -39,23 +42,7 @@ export default function DashboardPage() {
 		if (!currentDraft.trim() || !activeConversationId || !isConnected) return;
 
 		const text = currentDraft.trim();
-		const tempId = `temp-${new Date()}`;
-
-		// Optimistic local render only — the real doc arrives
-		// via the "message_received" socket event and replaces this.
-		queryClient.setQueryData<MessageDoc[]>(["messages", activeConversationId], (old) => [
-			...(old || []),
-			{
-				_id: tempId,
-				tenantId: activeConversation?.tenantId,
-				conversationId: activeConversationId,
-				senderType: "agent",
-				text,
-				senderId: "",
-				createdAt: new Date().toISOString(),
-				pending: true,
-			} as MessageDoc,
-		]);
+		const tempId = `temp-${crypto.randomUUID()}`;
 
 		const sent = sendMessage("send_message", {
 			conversationId: activeConversationId,
@@ -65,6 +52,21 @@ export default function DashboardPage() {
 
 		if (sent) {
 			clearDraft(activeConversationId);
+
+			// Optimistic local render only — the real doc arrives
+			queryClient.setQueryData<MessageDoc[]>(["messages", activeConversationId], (old) => [
+				...(old || []),
+				{
+					_id: tempId,
+					tenantId: activeConversation?.tenantId,
+					conversationId: activeConversationId,
+					senderType: "agent",
+					text,
+					senderId: "",
+					createdAt: new Date().toISOString(),
+					pending: true,
+				} as MessageDoc,
+			]);
 		} else {
 			// roll back the optimistic entry if the socket wasn't open
 			queryClient.setQueryData<MessageDoc[]>(["messages", activeConversationId], (old) =>

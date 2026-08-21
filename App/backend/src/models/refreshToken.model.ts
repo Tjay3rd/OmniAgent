@@ -4,7 +4,7 @@ export interface IRefreshToken extends Document {
 	userId: Schema.Types.ObjectId;
 	tenantId: Schema.Types.ObjectId;
 	role: string;
-	token: string;
+	tokenHash: string;
 	familyId: string; // Tracks the "token chain" to detect reuse.
 	familyExpiresAt: Date; // Absolute expiration for the entire token family, regardless of sliding window activity.
 	isUsed: boolean; // If true, this token should NEVER be presented again.
@@ -22,7 +22,7 @@ const refreshTokenSchema = new Schema<IRefreshToken>({
 		ref: "Tenant",
 		required: true,
 	},
-	token: { type: String, required: true, unique: true },
+	tokenHash: { type: String, required: true, unique: true },
 	role: { type: String, required: true },
 	familyId: { type: String, required: true },
 	isUsed: { type: Boolean, default: false },
@@ -33,7 +33,7 @@ const refreshTokenSchema = new Schema<IRefreshToken>({
 // Automatic cleanup index when token expires
 refreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 // High-speed lookup for rotation checks
-refreshTokenSchema.index({ token: 1 });
+refreshTokenSchema.index({ tokenHash: 1 });
 
 const RefreshToken = model<IRefreshToken>("RefreshToken", refreshTokenSchema);
 export default RefreshToken;

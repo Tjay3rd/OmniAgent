@@ -1,13 +1,18 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { MessageSquare, X, Send, Bot } from "lucide-react";
+import { MessageSquare, X, Send, Bot, AlertCircle } from "lucide-react";
 
 interface WidgetMessage {
 	_id?: string;
-	senderType: "customer" | "ai" | "agent";
+	senderType: "customer" | "ai" | "agent" | "admin" | "owner";
 	text: string;
 }
+
+type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed";
+
+const MAX_RECONNECT_ATTEMPTS = 5;
+const BASE_RECONNECT_DELAY_MS = 1000;
 
 export default function ChatWidget({ tenantId }: { tenantId: string }) {
 	const [isOpen, setIsOpen] = useState(false);
@@ -15,22 +20,47 @@ export default function ChatWidget({ tenantId }: { tenantId: string }) {
 	const [input, setInput] = useState("");
 	const [conversationId, setConversationId] = useState<string | null>(null);
 	const [streamingText, setStreamingText] = useState(""); // Holds incoming backend Vercel AI SDK text deltas
+	const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
 
 	const wsRef = useRef<WebSocket | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const reconnectAttemptsRef = useRef(0);
+	const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Tracks whether the effect has been torn down, so a pending reconnect timer doesn't fire after unmount
+	const isActiveRef = useRef(true);
 
 	useEffect(() => {
-		if (isOpen && !wsRef.current) {
-			// 1. Establish connection using native browser API with query parameters
-			const wsUrl = `${process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:5000"}?tenantId=${tenantId}`;
-			wsRef.current = new WebSocket(wsUrl);
+		if (!isOpen) return;
 
-			wsRef.current.onopen = () => {
+		isActiveRef.current = true;
+
+		function connect() {
+			setConnectionStatus(reconnectAttemptsRef.current === 0 ? "connecting" : "reconnecting");
+
+			const wsUrl = `${process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:5000"}?tenantId=${tenantId}`;
+			const ws = new WebSocket(wsUrl);
+			wsRef.current = ws;
+
+			ws.onopen = () => {
+				//prevent persisting a socket connection if the user navigates away(unmounts component) before the connection is open.
+				if (!isActiveRef.current) return ws.close(1000, "Component unmounted before the socket opened");
+
+				reconnectAttemptsRef.current = 0;
+				setConnectionStatus("open");
 				console.log("Raw native WebSocket connection successfully established");
+
+				if (ws.readyState === WebSocket.OPEN) {
+					ws.send(
+						JSON.stringify({
+							event: "join_conversation",
+							data: {},
+						}),
+					);
+				}
 			};
 
 			// 2. Centralized router to intercept custom payload frames
-			wsRef.current.onmessage = (event) => {
+			ws.onmessage = (event) => {
 				try {
 					const payload = JSON.parse(event.data);
 
@@ -40,18 +70,24 @@ export default function ChatWidget({ tenantId }: { tenantId: string }) {
 							setMessages(payload.data.history);
 							break;
 
+						//human intervention messages from the dashboard.
 						case "message_received":
 							setMessages((prev) => [...prev, payload.data]);
 							break;
 
 						case "ai_token_stream":
-							// Accumulate streaming characters sequentially
 							setStreamingText((prev) => prev + payload.data.token);
 							break;
 
 						case "ai_stream_finished":
-							setMessages((prev) => [...prev, { senderType: "ai", text: payload.data.text }]);
-							setStreamingText(""); // Wipe character stream buffer clean
+							setMessages((prev) => [
+								...prev,
+								{
+									senderType: "ai",
+									text: payload.data.text,
+								},
+							]);
+							setStreamingText("");
 							break;
 
 						default:
@@ -62,39 +98,75 @@ export default function ChatWidget({ tenantId }: { tenantId: string }) {
 				}
 			};
 
-			wsRef.current.onclose = () => {
+			ws.onclose = (event) => {
 				console.log("Native WebSocket pipeline closed down");
+
+				//deleting the old socket
 				wsRef.current = null;
+
+				// Don't reconnect if the widget was closed by the user or the component unmounted
+				if (!isActiveRef.current || event.code === 1000) return;
+
+				if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+					const attempt = reconnectAttemptsRef.current + 1;
+					reconnectAttemptsRef.current = attempt;
+
+					// Exponential backoff: 1s, 2s, 4s, 8s, 16s
+					const delay = BASE_RECONNECT_DELAY_MS * 2 ** (attempt - 1);
+
+					setConnectionStatus("reconnecting");
+					reconnectTimeoutRef.current = setTimeout(connect, delay);
+				} else {
+					setConnectionStatus("closed");
+				}
+			};
+
+			ws.onerror = (err) => {
+				console.error("WebSocket error:", err);
+				// onclose fires right after onerror for native WebSocket, so reconnection is handled there
 			};
 		}
 
+		connect();
+
 		return () => {
-			if (!isOpen && wsRef.current) {
+			isActiveRef.current = false;
+
+			if (reconnectTimeoutRef.current) {
+				clearTimeout(reconnectTimeoutRef.current);
+				reconnectTimeoutRef.current = null;
+			}
+
+			if (wsRef.current) {
 				wsRef.current.close();
 				wsRef.current = null;
 			}
+
+			reconnectAttemptsRef.current = 0;
 		};
 	}, [isOpen, tenantId]);
 
 	useEffect(() => {
-		scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+		scrollRef.current?.scrollIntoView({
+			behavior: "smooth",
+		});
 	}, [messages, streamingText]);
 
 	const handleSend = (e: React.SubmitEvent) => {
 		e.preventDefault();
-		if (!input.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+		if (!input.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+			return;
+		}
 
 		const userMessage: WidgetMessage = {
 			senderType: "customer",
 			text: input.trim(),
 		};
 
-		// Reflect message locally immediately to optimize responsive feel
 		setMessages((prev) => [...prev, userMessage]);
 
-		// Stringify data structure down the pipeline so the native backend parsing layer reads it cleanly
 		const payload = {
-			action: "widget_message_sent",
+			event: "send_message",
 			data: {
 				conversationId,
 				tenantId,
@@ -106,9 +178,10 @@ export default function ChatWidget({ tenantId }: { tenantId: string }) {
 		setInput("");
 	};
 
+	const isDisconnected = connectionStatus === "closed" || connectionStatus === "reconnecting";
+
 	return (
 		<div className="fixed bottom-6 right-6 z-50 font-sans text-zinc-200 antialiased">
-			{/* TRIGGER FLOATING ICON BUTTON */}
 			{!isOpen && (
 				<button
 					onClick={() => setIsOpen(true)}
@@ -118,15 +191,27 @@ export default function ChatWidget({ tenantId }: { tenantId: string }) {
 				</button>
 			)}
 
-			{/* CHAT WINDOW BOX POPUP */}
 			{isOpen && (
 				<div className="w-95 h-130 rounded-2xl border border-zinc-800 bg-zinc-900/95 shadow-2xl backdrop-blur-md flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
 					<header className="p-4 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between">
 						<div className="flex items-center gap-2.5">
-							<div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+							<div
+								className={`h-2 w-2 rounded-full ${
+									connectionStatus === "open"
+										? "bg-emerald-500 animate-pulse"
+										: connectionStatus === "reconnecting"
+											? "bg-amber-500 animate-pulse"
+											: "bg-red-500"
+								}`}
+							/>
 							<div>
 								<h3 className="text-xs font-semibold tracking-wide text-zinc-100">Support Concierge</h3>
-								<p className="text-[10px] text-zinc-500">Raw Connection Client Engine</p>
+								<p className="text-[10px] text-zinc-500">
+									{connectionStatus === "open" && "Connected"}
+									{connectionStatus === "connecting" && "Connecting..."}
+									{connectionStatus === "reconnecting" && "Reconnecting..."}
+									{connectionStatus === "closed" && "Connection lost"}
+								</p>
 							</div>
 						</div>
 						<button onClick={() => setIsOpen(false)} className="text-zinc-500 hover:text-zinc-300 transition">
@@ -152,7 +237,6 @@ export default function ChatWidget({ tenantId }: { tenantId: string }) {
 							);
 						})}
 
-						{/* LIVE CONCURRENT TOKEN TEXT DELTA BLOCKS */}
 						{streamingText && (
 							<div className="flex w-full justify-start">
 								<div className="max-w-[85%] p-3 text-xs leading-relaxed bg-zinc-800 border border-zinc-700/50 text-zinc-100 rounded-xl rounded-bl-none flex items-start gap-1.5 animate-pulse">
@@ -164,6 +248,17 @@ export default function ChatWidget({ tenantId }: { tenantId: string }) {
 						<div ref={scrollRef} />
 					</div>
 
+					{isDisconnected && (
+						<div className="px-3 py-2 bg-red-950/40 border-t border-red-900/50 flex items-center gap-2 text-[11px] text-red-300">
+							<AlertCircle className="h-3.5 w-3.5 shrink-0" />
+							<span>
+								{connectionStatus === "reconnecting"
+									? "Reconnecting to support..."
+									: "Connection lost. Please close and reopen the chat."}
+							</span>
+						</div>
+					)}
+
 					<footer className="p-3 border-t border-zinc-800 bg-zinc-900">
 						<form
 							onSubmit={handleSend}
@@ -174,11 +269,12 @@ export default function ChatWidget({ tenantId }: { tenantId: string }) {
 								value={input}
 								onChange={(e) => setInput(e.target.value)}
 								placeholder="Type your message..."
-								className="flex-1 bg-transparent border-0 outline-none px-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
+								disabled={connectionStatus !== "open"}
+								className="flex-1 bg-transparent border-0 outline-none px-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none disabled:opacity-40"
 							/>
 							<button
 								type="submit"
-								disabled={!input.trim()}
+								disabled={!input.trim() || connectionStatus !== "open"}
 								className="h-7 w-7 rounded-md bg-zinc-900 border border-zinc-800 text-blue-400 flex items-center justify-center hover:border-zinc-700 transition disabled:opacity-30 disabled:text-zinc-600"
 							>
 								<Send className="h-3 w-3" />

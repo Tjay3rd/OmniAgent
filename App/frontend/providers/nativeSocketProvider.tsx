@@ -36,13 +36,10 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 			const base =
 				process.env.NEXT_PUBLIC_WS_URL ||
 				(typeof window !== "undefined" && window.location.protocol === "https:"
-					? "wss://localhost:3000"
-					: "ws://localhost:3000");
+					? "wss://actualSite.com" //actual production websocketURL
+					: "ws://localhost:5000"); //development fallback
 
-			// Token passed as a query param since custom headers
-			// aren't allowed on the browser WS handshake.
-			const token = localStorage.getItem("accessToken") || "";
-			const wsUrl = `${base}/dashboard?token=${encodeURIComponent(token)}`;
+			const wsUrl = `${base}/dashboard`;
 
 			const ws = new WebSocket(wsUrl);
 			wsRef.current = ws;
@@ -52,12 +49,14 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 				setSocket(ws);
 				setIsConnected(true);
 
-				ws.send(
-					JSON.stringify({
-						event: "join_tenant_dashboard",
-						data: {}, // wherever this comes from in your auth
-					}),
-				);
+				if (ws.readyState === WebSocket.OPEN) {
+					ws.send(
+						JSON.stringify({
+							event: "join_tenant_dashboard",
+							data: {},
+						}),
+					);
+				}
 			};
 
 			ws.onmessage = (event) => {
@@ -69,6 +68,8 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 							const newMessage: MessageDoc = payload.data;
 							queryClient.setQueryData<MessageDoc[]>(["messages", newMessage.conversationId], (old) => {
 								if (!old) return [newMessage];
+								const existing = old.some((m) => m._id === newMessage._id);
+								if (existing) return old; // Avoid duplicates if the message already exists
 								const withoutTemp = old.filter((m) => m._id !== payload.data.tempId);
 								return [...withoutTemp, newMessage];
 							});

@@ -4,6 +4,7 @@ import { WebSocketServer } from "ws";
 import mongoose from "mongoose";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import { parseCookie } from "cookie";
 import helmet from "helmet";
 import { Request, Response, NextFunction } from "express";
 // Service & Router Core Hooks
@@ -15,14 +16,113 @@ import billingRouter from "./routes/billing.routes.js";
 // Environment Configuration Validation
 import { env } from "./validation/env.zod.js";
 import widgetRouter from "./routes/widget.routes.js";
+import jwt from "jsonwebtoken";
+import Conversation from "./models/chatConversation.model.js";
 
 const app = express();
 const httpServer = createServer(app);
 app.set("trust proxy", 1);
 
 // 1. Initialize the WebSocket layer over the shared HTTP infrastructure
-const wss = new WebSocketServer({ server: httpServer });
+const wss = new WebSocketServer({ noServer: true });
 initWebSocketServer(wss);
+
+httpServer.on("upgrade", (request: Request, socket, head) => {
+	const { pathname, searchParams } = new URL(request.url!, `http://${request.headers.host}`);
+
+	if (pathname === "/dashboard") {
+		return handleDashboardUpgrade(request, socket, head);
+	}
+
+	if (pathname === "/widget") {
+		return handleWidgetUpgrade(request, socket, head, searchParams);
+	}
+
+	socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+	socket.destroy();
+});
+
+const handleDashboardUpgrade = (request: Request, socket: any, head: any) => {
+	const cookies = parseCookie(request.headers.cookie || "");
+	const token = cookies.accessToken;
+	if (!token) {
+		socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+		socket.destroy();
+		return;
+	}
+
+	let payload: {
+		id: string;
+		tenantId: string;
+		role: "owner" | "admin" | "agent";
+		senderType?: "owner" | "admin" | "agent";
+	} | null;
+
+	try {
+		payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as typeof payload;
+		if (payload) payload.senderType = payload.role; // Ensure senderType is set for dashboard connections
+	} catch (error) {
+		socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+		socket.destroy();
+		return;
+	}
+
+	wss.handleUpgrade(request, socket, head, (ws) => {
+		// Attach the verified payload to the WebSocket instance
+		(ws as any).tenantId = payload?.tenantId;
+		(ws as any).userId = payload?.id;
+		(ws as any).connectionType = "admin";
+		(ws as any).senderType = payload?.role;
+
+		wss.emit("connection", ws, request);
+	});
+};
+
+const handleWidgetUpgrade = async (request: Request, socket: any, head: any, searchParams: URLSearchParams) => {
+	const visitorToken = searchParams.get("visitorToken");
+	const conversationId = searchParams.get("conversationId");
+
+	if (!visitorToken || !conversationId) {
+		socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+		socket.destroy();
+		return;
+	}
+
+	try {
+		let decoded: { customerId: string; tenantId: string };
+		try {
+			decoded = jwt.verify(visitorToken, env.WIDGET_JWT_SECRET!) as typeof decoded;
+		} catch {
+			socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+			socket.destroy();
+			return;
+		}
+
+		const conversation = await Conversation.findOne({
+			_id: conversationId,
+			tenantId: decoded.tenantId,
+			customerId: decoded.customerId,
+		}).lean();
+
+		if (!conversation) {
+			socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+			socket.destroy();
+			return;
+		}
+
+		wss.handleUpgrade(request, socket, head, (ws) => {
+			(ws as any).tenantId = decoded.tenantId;
+			(ws as any).customerId = decoded.customerId;
+			(ws as any).conversationId = conversationId;
+
+			wss.emit("connection", ws, request);
+		});
+	} catch (error) {
+		socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+		socket.destroy();
+		return;
+	}
+};
 
 // 2. standard security headers (CSP, HSTS, X-Content-Type-Options, etc.).
 app.use(helmet());
@@ -37,7 +137,7 @@ app.use(
 
 // 4. MOUNT STRIPE WEBHOOK ROUTE FIRST.
 // This ensures raw stream buffers are captured before global body-parsers parse the text stream
-app.use("/api/webhooks", webhookRouter);
+app.use("/api/webhooks", express.raw({ type: "application/json" }), webhookRouter);
 
 // 5. Global Request Utility Parsers
 app.use(express.json());

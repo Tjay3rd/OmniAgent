@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import QueryProvider from "@/providers/queryProvider";
-import { NativeSocketProvider } from "@/providers/nativeSocketProvider";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -15,9 +14,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
 	return (
 		<html lang="en" className="h-full bg-zinc-950">
 			<body className={`${inter.className}  h-full antialiased`}>
-				<QueryProvider>
-					<NativeSocketProvider>{children}</NativeSocketProvider>
-				</QueryProvider>
+				<QueryProvider>{children}</QueryProvider>
 			</body>
 		</html>
 	);

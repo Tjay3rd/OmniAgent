@@ -10,5 +10,3 @@ declare global {
 	}
 }
 export {};
-
-export type Tier = "free" | "starter" | "production";

@@ -1,43 +1,63 @@
 import { Request, Response, NextFunction } from "express";
 import Customer from "../models/customer.model.js";
 import Conversation from "../models/chatConversation.model.js";
+import Tenant from "../models/tenant.model.js";
 import Message from "../models/chatMessage.model.js";
+import jwt from "jsonwebtoken";
+import { env } from "../validation/env.zod.js";
+import path from "path";
 
 export const initializeWidgetCustomer = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {
-		// 1. Ensure the request actually came through a valid tenant subdomain
-		if (!req.tenant) {
-			return res.status(400).json({ error: "Missing tenant workspace context." });
+		const { tenantId, visitorToken } = req.body;
+
+		if (!tenantId) {
+			return res.status(400).json({ error: "Missing tenantId." });
 		}
 
-		const { visitorToken } = req.body;
+		const tenant = await Tenant.findById(tenantId).lean();
+		if (!tenant) {
+			return res.status(400).json({ error: "Unknown tenant." });
+		}
 
-		// 2. If the user already has a tracked token in localStorage, verify them
+		// Returning visitor — they already carry a token from a previous visit
 		if (visitorToken) {
-			const existingCustomer = await Customer.findOne({
-				tenantId: req.tenant._id,
-				_id: visitorToken, // Using the MongoDB object ID as their browser token
-			});
+			try {
+				const decoded = jwt.verify(visitorToken, env.WIDGET_JWT_SECRET!) as { customerId: string; tenantId: string };
 
-			if (existingCustomer) {
-				return res.status(200).json({
-					message: "Welcome back",
-					customer: existingCustomer,
-				});
+				// Token must actually belong to this tenant — guards against a stale or mismatched token (e.g. widget moved to a different tenant's site)
+				if (decoded.tenantId === tenantId) {
+					const existingCustomer = await Customer.findOne({
+						_id: decoded.customerId,
+						tenantId,
+					});
+
+					if (existingCustomer) {
+						return res.status(200).json({
+							message: "Welcome back",
+							token: visitorToken,
+							customer: existingCustomer,
+						});
+					}
+				}
+			} catch {
+				// invalid/expired — fall through and provision a fresh anonymous customer
 			}
 		}
 
-		// 3. If they are completely new, provision an anonymous record
+		// New visitor (or the old token no longer resolves to anything)
 		const newCustomer = await Customer.create({
-			tenantId: req.tenant._id,
+			tenantId,
 			name: "Anonymous Guest",
-			// email and externalId are empty for now until they provide them
 		});
 
-		// 4. Return the new profile. The widget script saves this ID to localStorage
+		const token = jwt.sign({ customerId: newCustomer._id.toString(), tenantId }, env.WIDGET_JWT_SECRET!, {
+			expiresIn: "90d",
+		});
+
 		return res.status(201).json({
 			message: "Anonymous visitor profile initialized",
-			visitorToken: newCustomer._id,
+			token,
 			customer: newCustomer,
 		});
 	} catch (error) {
@@ -47,19 +67,21 @@ export const initializeWidgetCustomer = async (req: Request, res: Response, next
 
 export const identifyWidgetCustomer = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {
-		if (!req.tenant) {
-			return res.status(400).json({ error: "Missing tenant workspace context." });
-		}
-
 		const { visitorToken, email, name, externalId } = req.body;
 
 		if (!visitorToken) {
-			return res.status(400).json({ error: "Missing visitor identifier token." });
+			return res.status(400).json({ error: "Missing visitor session token." });
 		}
 
-		// Update the record safely inside this tenant's siloed boundaries
+		let decoded: { customerId: string; tenantId: string };
+		try {
+			decoded = jwt.verify(visitorToken, env.WIDGET_JWT_SECRET!) as typeof decoded;
+		} catch {
+			return res.status(401).json({ error: "Invalid or expired session." });
+		}
+
 		const updatedCustomer = await Customer.findOneAndUpdate(
-			{ _id: visitorToken, tenantId: req.tenant._id },
+			{ _id: decoded.customerId, tenantId: decoded.tenantId },
 			{
 				$set: {
 					...(email && { email: email.toLowerCase().trim() }),
@@ -67,7 +89,7 @@ export const identifyWidgetCustomer = async (req: Request, res: Response, next: 
 					...(externalId && { externalId }),
 				},
 			},
-			{ new: true }, // Returns the newly modified record
+			{ new: true },
 		);
 
 		if (!updatedCustomer) {
@@ -85,32 +107,32 @@ export const identifyWidgetCustomer = async (req: Request, res: Response, next: 
 
 export const getOrCreateConversation = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {
-		// req.tenant is provided by our extractSubdomain middleware
-		if (!req.tenant) {
-			return res.status(400).json({ error: "Tenant context missing." });
+		const { visitorToken } = req.body;
+
+		if (!visitorToken) {
+			return res.status(400).json({ error: "Missing visitor session token." });
 		}
 
-		const { customerId } = req.body;
-		if (!customerId) {
-			return res.status(400).json({ error: "Customer identifier required." });
+		let decoded: { customerId: string; tenantId: string };
+		try {
+			decoded = jwt.verify(visitorToken, env.WIDGET_JWT_SECRET!) as typeof decoded;
+		} catch {
+			return res.status(401).json({ error: "Invalid or expired session." });
 		}
 
-		// Look for an existing open conversation channel for this customer
 		let conversation = await Conversation.findOne({
-			tenantId: req.tenant._id,
-			customerId,
-			status: "open",
+			tenantId: decoded.tenantId,
+			customerId: decoded.customerId,
 		});
 
 		let isNew = false;
 
-		// If no open thread exists (first time chatting or past chat was closed), provision a new one
 		if (!conversation) {
 			conversation = await Conversation.create({
-				tenantId: req.tenant._id,
-				customerId,
+				tenantId: decoded.tenantId,
+				customerId: decoded.customerId,
 				status: "open",
-				aiHandled: true, // System defaults to AI automation out of the gate
+				aiHandled: true,
 			});
 			isNew = true;
 		}
@@ -127,31 +149,43 @@ export const getOrCreateConversation = async (req: Request, res: Response, next:
 export const getConversationMessages = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {
 		const { conversationId } = req.params;
+		const { visitorToken } = req.query as { visitorToken?: string };
 
-		// Optional pagination: default to loading the 50 most recent texts
+		if (!visitorToken) {
+			return res.status(400).json({ error: "Missing visitor session token." });
+		}
+
+		let decoded: { customerId: string; tenantId: string };
+		try {
+			decoded = jwt.verify(visitorToken, env.WIDGET_JWT_SECRET!) as typeof decoded;
+		} catch {
+			return res.status(401).json({ error: "Invalid or expired session." });
+		}
+
+		// Ownership check — this is the piece that was missing before
+		const conversation = await Conversation.findOne({
+			_id: conversationId,
+			tenantId: decoded.tenantId,
+			customerId: decoded.customerId,
+		}).lean();
+
+		if (!conversation) {
+			return res.status(404).json({ error: "Conversation not found or access denied." });
+		}
+
 		const limit = parseInt(req.query.limit as string) || 50;
 		const beforeTimestamp = req.query.before ? new Date(req.query.before as string) : null;
 
-		// Build query to securely target the single conversation thread
 		const query: any = { conversationId };
-
-		// If paginating backward through history, only pull messages older than the current top screen message
 		if (beforeTimestamp) {
 			query.createdAt = { $lt: beforeTimestamp };
 		}
 
-		const messages = await Message.find(query)
-			.sort({ createdAt: -1 }) // Get newest first to cleanly limit the payload array size
-			.limit(limit)
-			.lean(); // Skips Mongoose internal tracking fluff to maximize execution speed
+		const messages = await Message.find(query).sort({ createdAt: -1 }).limit(limit).lean();
 
-		// Reverse the array slice before returning so the frontend can map over them chronologically
 		messages.reverse();
 
-		return res.status(200).json({
-			count: messages.length,
-			messages,
-		});
+		return res.status(200).json({ count: messages.length, messages });
 	} catch (error) {
 		next(error);
 	}
@@ -188,5 +222,14 @@ export const humanTakeoverHandler = async (req: Request, res: Response, next: Ne
 		});
 	} catch (error) {
 		next(error);
+	}
+};
+
+export const widgetScript = async (req: Request, res: Response) => {
+	try {
+		res.setHeader("Access-Control-Allow-Origin", "*");
+		res.sendFile(path.join(__dirname, "../public/widget.js"));
+	} catch (error) {
+		res.status(500).send('console.error("Failed to load widget script");');
 	}
 };

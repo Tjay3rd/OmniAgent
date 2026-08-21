@@ -19,15 +19,15 @@ import Tenant from "../models/tenant.model.js";
 export const tenantRegistrationHandler = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	const session = await mongoose.startSession();
 	try {
-		//const ALLOWED_PLANS = ["free", "starter", "production"];
+		const ALLOWED_PLANS = ["free", "starter", "production"];
 
-		const { companyName, name, email, password, subdomain, plan } = req.body;
+		const { companyName, name, email, password, subdomain } = req.body;
+
+		const plan = ALLOWED_PLANS.includes(req.body.plan) ? req.body.plan : "free"; // safe default
 
 		if (!companyName || !name || !email || !password || !subdomain || !plan) {
 			return res.status(400).json({ error: "All fields are required" });
 		}
-
-		//const safePlan = ALLOWED_PLANS.includes(plan) ? plan : "free"; // safe default
 
 		const existingUser = await User.findOne({ email });
 		if (existingUser) {
@@ -42,7 +42,7 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 					email, // The billing/contact email for the business
 					subdomain,
 					//plan: safePlan, Stripe Webhook is now the single source of truth for all financial data.
-					subscriptionStatus: "inactive", // Becomes active after Stripe checkout
+					subscriptionStatus: plan === "free" ? "trialing" : "inactive", // Becomes active after Stripe checkout
 				},
 			],
 			{ session },
@@ -64,13 +64,6 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 		await session.commitTransaction();
 		session.endSession();
 
-		try {
-			plan === "free" ? (tenant.subscriptionStatus = "trialing") : (tenant.subscriptionStatus = "inactive");
-			await tenant.save();
-		} catch (error) {
-			next(error);
-		}
-
 		await signTokenAndSetCookies(res, {
 			id: user._id.toString(),
 			tenantId: tenant._id.toString(),
@@ -89,6 +82,7 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 		await session.abortTransaction();
 		session.endSession();
 		next(error);
+		return;
 	}
 };
 
@@ -132,6 +126,7 @@ export const loginHandler =
 			res.status(200).json({ message: "Login successful", user: userResponse });
 		} catch (error) {
 			next(error);
+			return;
 		}
 	};
 
@@ -245,18 +240,12 @@ export const handleLogout = async (req: Request, res: Response, next: NextFuncti
 				if (nukeEverywhere) {
 					await RefreshToken.deleteMany({ userId: tokenDoc.userId });
 				} else {
-					await RefreshToken.deleteOne({ id: tokenDoc._id });
+					await RefreshToken.deleteOne({ _id: tokenDoc._id });
 				}
 			}
 		}
 
 		// Clear both httpOnly cookies immediately from the user's browser storage
-		const baseOptions = {
-			httpOnly: true,
-			secure: env.NODE_ENV === "production",
-			sameSite: "strict" as const,
-		};
-
 		res.clearCookie("accessToken", {
 			...baseOptions,
 			path: "/",
@@ -264,7 +253,7 @@ export const handleLogout = async (req: Request, res: Response, next: NextFuncti
 
 		res.clearCookie("refreshToken", {
 			...baseOptions,
-			path: "/api/refresh",
+			path: refreshPath,
 		});
 
 		return res.status(200).json({

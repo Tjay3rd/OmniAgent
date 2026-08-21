@@ -13,7 +13,7 @@ export const hashToken = (token: string) => crypto.createHash("sha256").update(t
 export const baseOptions = {
 	httpOnly: true,
 	secure: env.NODE_ENV === "production",
-	sameSite: "strict" as const,
+	sameSite: "none" as const,
 };
 
 export const setTokenCookies = async (res: Response, accessToken: string, refreshToken: string) => {

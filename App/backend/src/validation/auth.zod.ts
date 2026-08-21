@@ -60,5 +60,5 @@ export const acceptInviteSchema = z.object({
 
 export const createInviteSchema = z.object({
 	email: z.email("Invalid email address format.").toLowerCase().trim(),
-	role: z.enum(["admin", "agent"], "Role must be either 'admin' or 'agent'."),
+	role: z.enum(["owner"], "Only the tenant owner can invite an agent or an admin"),
 });

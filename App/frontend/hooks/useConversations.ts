@@ -7,10 +7,8 @@ export function useConversations() {
 	return useQuery<ConversationDoc[]>({
 		queryKey: ["conversations"],
 		queryFn: async () => {
-			const response = await api.get("/api/dasboard/conversations");
-			response.data.updatedAt = new Date(response.data.updatedAt);
-			response.data.wasFirstHandledByHumanAt = new Date(response.data.wasFirstHandledByHumanAt);
-			return response.data;
+			const response = await api.get<{ conversations: ConversationDoc[] }>("/api/dasboard/conversations");
+			return response.data.conversations;
 		},
 		// Keep data fresh, but poll less aggressively if WebSockets handle live updates
 		staleTime: 1000 * 60 * 5,
@@ -25,8 +23,10 @@ export function useTakeoverConversation() {
 	const takeoverMutation = useMutation({
 		mutationFn: async (conversationId: string) => {
 			// Hits Express backend endpoint to set assignedTo and wasFirstHandledByHumanAt
-			const response = await api.patch<ConversationDoc>(`/api/widget/chat/${conversationId}/takeover`);
-			return response.data;
+			const response = await api.patch<{ conversation: ConversationDoc }>(
+				`/api/widget/chat/${conversationId}/takeover`,
+			);
+			return response.data.conversation;
 		},
 		// Optimistic or synchronous cache updates once backend gives the green light
 		onSuccess: (updatedConversation, conversationId) => {
@@ -39,13 +39,13 @@ export function useTakeoverConversation() {
 					: new Date().toDateString(),
 				assignedTo: updatedConversation.assignedTo,
 			});
-			// Update the target conversation in our existing cache list directly without an extra network request
+			// Update the target conversation in our existing cache list directly(optimistically) without an extra network request
 			queryClient.setQueryData<ConversationDoc[]>(["conversations"], (oldConversations) => {
 				if (!oldConversations) return [updatedConversation];
 
 				return oldConversations
 					.map((c) => (c._id === updatedConversation._id ? updatedConversation : c))
-					.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+					.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 			});
 			// ...Or alternatively, Tell React Query to invalidate its server cache so its data matches the backend perfectly
 			/* queryClient.invalidateQueries({ queryKey: ["conversations"] }); */
