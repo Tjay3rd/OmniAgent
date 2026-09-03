@@ -2,17 +2,11 @@ import { z } from "zod";
 import mongoose from "mongoose";
 
 export const messageSchema = z.object({
-	tenantId: z.string().refine((val) => mongoose.Types.ObjectId.isValid(val), { message: "Invalid ObjectId" }),
 	conversationId: z
 		.string()
 		.refine((val) => mongoose.Types.ObjectId.isValid(val), { message: "Invalid ObjectId" })
 		.optional(),
-	senderType: z.string().nonempty(),
 	text: z.string().nonempty(),
-	senderId: z
-		.string()
-		.refine((val) => mongoose.Types.ObjectId.isValid(val), { message: "Invalid ObjectId" })
-		.optional(),
 	tempId: z.string(),
 });
 

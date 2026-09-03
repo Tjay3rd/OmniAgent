@@ -30,7 +30,7 @@ const processedWebhookSchema = new Schema<IProcessedWebhook>(
 		},
 		lastAttemptAt: {
 			type: Date,
-			default: Date.now(), // Tracks the last time we attempted to process this webhook
+			default: Date.now, // Tracks the last time we attempted to process this webhook
 		},
 		errorMessage: {
 			type: String,

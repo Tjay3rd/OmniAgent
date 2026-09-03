@@ -145,7 +145,7 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 		// Attacker might be reusing a token from a wiped family, or simply a fake made up token.
 		if (!tokenDoc) {
 			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
-			res.clearCookie("refreshToken", { ...baseOptions, path: "/api/refresh" });
+			res.clearCookie("refreshToken", { ...baseOptions, path: refreshPath });
 			return res.status(401).json({ error: "Session invalid. Please re-login." });
 		}
 
@@ -154,7 +154,7 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 		if (tokenDoc.isUsed) {
 			await RefreshToken.deleteMany({ familyId: tokenDoc.familyId });
 			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
-			res.clearCookie("refreshToken", { ...baseOptions, path: "/api/refresh" });
+			res.clearCookie("refreshToken", { ...baseOptions, path: refreshPath });
 			return res.status(403).json({
 				error: "Security breach detected. All active sessions revoked.",
 			});
@@ -162,6 +162,7 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 
 		const now = Date.now();
 		const familyExpiresAt = tokenDoc.familyExpiresAt;
+		const tokenExpiresAt = tokenDoc.expiresAt;
 
 		//2. Hard cap check — family has lived its full life
 		if (now >= familyExpiresAt.getTime()) {
@@ -169,7 +170,17 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 				familyId: tokenDoc.familyId,
 			});
 			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
-			res.clearCookie("refreshToken", { ...baseOptions, path: "/api/refresh" });
+			res.clearCookie("refreshToken", { ...baseOptions, path: refreshPath });
+			return res.status(401).json({
+				error: "Session expired. Please re-login.",
+			});
+		}
+
+		//fallback for when mongo hasnt cleared the expired token yet, but the family is still valid. This is a hard cap on the individual token's life.
+		if (now >= tokenExpiresAt.getTime()) {
+			await RefreshToken.deleteOne({ _id: tokenDoc._id });
+			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
+			res.clearCookie("refreshToken", { ...baseOptions, path: refreshPath });
 			return res.status(401).json({
 				error: "Session expired. Please re-login.",
 			});
@@ -241,7 +252,7 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 
 		if (breach) {
 			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
-			res.clearCookie("refreshToken", { ...baseOptions, path: "/api/refresh" });
+			res.clearCookie("refreshToken", { ...baseOptions, path: refreshPath });
 			return res.status(403).json({
 				error: "Security breach detected. All active sessions revoked.",
 			});

@@ -51,8 +51,8 @@ export const createCheckoutSession = async (req: Request, res: Response, next: N
 			{
 				mode: "subscription",
 				line_items: [{ price: priceId, quantity: 1 }],
-				success_url: `${env.FRONTEND_URL}/api/dashboard/billing?success=true`,
-				cancel_url: `${env.FRONTEND_URL}/api/dashboard/billing?canceled=true`,
+				success_url: `${env.FRONTEND_URL}/dashboard/billing?success=true`,
+				cancel_url: `${env.FRONTEND_URL}/dashboard/billing?canceled=true`,
 				// Reuse existing Stripe customer if we already have one, so repeat purchases don't fragment into duplicate customers
 				customer: tenant.stripeCustomerId || undefined,
 				metadata: { tenantId },
@@ -81,7 +81,7 @@ export const createBillingPortalSession = async (req: Request, res: Response, ne
 
 		const session = await stripe.billingPortal.sessions.create({
 			customer: tenant.stripeCustomerId,
-			return_url: `${env.FRONTEND_URL}/billing`,
+			return_url: `${env.FRONTEND_URL}/dashboard/billing`,
 		});
 
 		res.json({ url: session.url });

@@ -12,7 +12,7 @@ interface CookieOptions {
 }
 
 const FAMILY_MAX_MS = 90 * 24 * 60 * 60 * 1000; // 90 day hard cap
-export const refreshPath = "/api/refresh"; // The only endpoint that can set the refresh cookie
+export const refreshPath = "/api/admin/refresh"; // The only endpoint that can set the refresh cookie
 export const ACCESS_TOKEN_TTL_MS = 45 * 60 * 1000; // 45 minutes
 export const IDLE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const hashToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");

@@ -29,10 +29,14 @@ export default function WidgetSettingsPage() {
 		? `<script src="${apiUrl}/api/widget/script.js" data-tenant-id="${tenantId}"></script>`
 		: "Loading...";
 
-	const handleCopy = () => {
-		navigator.clipboard.writeText(embedCode);
-		setCopied(true);
-		setTimeout(() => setCopied(false), 2000);
+	const handleCopy = async () => {
+		try {
+			await navigator.clipboard.writeText(embedCode);
+			setCopied(true);
+			setTimeout(() => setCopied(false), 2000);
+		} catch {
+			setError("Could not copy the snippet. Select the code and copy it manually.");
+		}
 	};
 
 	return (

@@ -66,6 +66,8 @@
       font-size:13px;resize:none;}
     #wgt-send{background:#111827;color:#fff;border:none;border-radius:8px;
       padding:0 14px;cursor:pointer;font-size:13px;}
+	#wgt-sendd{background:#111827;color:#fff;border:none;border-radius:8px;
+      padding:0 14px;cursor:pointer;font-size:13px;}
   `;
 	document.head.appendChild(style);
 
@@ -76,7 +78,7 @@
 
 	const identifyEmail = el("input", { type: "email", placeholder: "Your email" });
 	const identifyName = el("input", { type: "text", placeholder: "Your name" });
-	const identifySave = el("button", { id: "wgt-send", text: "Save" });
+	const identifySave = el("button", { id: "wgt-sendd", text: "Save" });
 	const identifyRow = el("div", { id: "wgt-identify" }, [identifyName, identifyEmail, identifySave]);
 
 	const input = el("textarea", { id: "wgt-input", rows: "1", placeholder: "Type a message..." });
@@ -111,7 +113,13 @@
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ tenantId, visitorToken: state.token }),
 		});
+
 		const data = await res.json();
+
+		if (!res.ok || !data.token || !data.customer || !data.customer._id) {
+			throw new Error(data.error || "Failed to initialize visitor session");
+		}
+
 		state.token = data.token;
 		state.customerId = data.customer._id;
 		localStorage.setItem("widgetToken", state.token);
@@ -128,7 +136,7 @@
 		localStorage.setItem("widgetConversationId", state.conversationId);
 	}
 
-	let messagesHistory;
+	let messagesHistory = [];
 	async function loadHistory() {
 		const url = `${API_BASE}/api/widget/chat/${state.conversationId}/messages`;
 		const res = await fetch(url, { headers: { Authorization: `Bearer ${state.token}` } });
@@ -143,12 +151,13 @@
 		const name = identifyName.value.trim();
 		if (!email && !name) return;
 
-		await fetch(`${API_BASE}/api/widget/identify`, {
+		const res = await fetch(`${API_BASE}/api/widget/customer/identify`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ visitorToken: state.token, email, name }),
 		});
 
+		if (!res.ok) return;
 		identifyRow.style.display = "none";
 	}
 
@@ -186,7 +195,7 @@
 
 			if (payload.event === "new_message") {
 				//prevent displaying same message bubble twice on message sent confirmation(tempId echo)
-				const idx = messagesHistory.findIndex((m) => m._d === payload.data.tempId);
+				const idx = messagesHistory.findIndex((m) => m._id === payload.data.tempId);
 				if (idx !== -1) {
 					messagesHistory[idx] = payload.data;
 					const node = messagesEl.querySelector(`[data-message-id="${payload.data.tempId}"]`);
@@ -219,14 +228,16 @@
 		const newMessage = {
 			event: "send_message",
 			data: {
-				_id: tempId,
+				tempId,
 				tenantId,
 				conversationId: state.conversationId,
 				senderType: "customer",
 				text,
 			},
 		};
-		messagesHistory.push(newMessage.data);
+
+		const optimistic = { ...newMessage.data, _id: tempId };
+		messagesHistory.push(optimistic);
 
 		renderMessage(newMessage.data);
 
@@ -260,10 +271,11 @@
 	identifySave.addEventListener("click", submitIdentify);
 
 	// ---- Boot sequence on first open -----------------------------------------
+	let initPromise = null;
 	async function openChat() {
 		try {
 			if (!state.token) {
-				await initCustomer();
+				await (initPromise || (initPromise = initCustomer()));
 			}
 			if (!state.conversationId) {
 				await getOrCreateConversation();
@@ -277,9 +289,11 @@
 		}
 	}
 
-	// Silent ghost sign-up on page load, per the original plan —
-	// establishes identity before the visitor ever clicks the icon.
+	// Silent ghost sign-up on page load, per the original plan — establishes identity before the visitor ever clicks the icon.
 	if (!state.token) {
-		initCustomer();
+		initPromise = initCustomer().catch((err) => {
+			console.error("[Widget] Failed to initialize visitor:", err);
+			initPromise = null; // allow retry on next click
+		});
 	}
 })();

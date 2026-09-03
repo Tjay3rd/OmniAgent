@@ -108,7 +108,7 @@ export default function DashboardPage() {
 				<div className="space-y-2 text-center">
 					<div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-700 border-t-emerald-500 mx-auto" />
 					<p className="text-lg text-red-600 tracking-wider">
-						ERROR LOADING CONVERSATIONS, RELOAD PAGE...`${conversationsErrorObject.message}`
+						ERROR LOADING CONVERSATIONS, RELOAD PAGE...{conversationsErrorObject.message}
 					</p>
 				</div>
 			</div>

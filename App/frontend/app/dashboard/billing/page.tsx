@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { api } from "../../../lib/api";
-import axios from "axios";
+import { useState, Suspense } from "react";
 import { CreditCard, Check, Zap, Loader2 } from "lucide-react";
+import axios from "axios";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
+import { api } from "../../../lib/api";
 import { Tier } from "../../../types/nextTypes";
 
 interface SubscriptionData {
@@ -171,9 +171,13 @@ const STATUS_MESSAGES: Record<SubscriptionData["status"], { message: string; act
 	},
 };
 
-export default function BillingPage() {
+function BillingContent() {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+
+	const searchParams = useSearchParams();
+	const checkoutSuccess = searchParams.get("success") === "true";
+	const checkoutCanceled = searchParams.get("canceled") === "true";
 
 	const { data: subscription, isLoading: subLoading } = useQuery({
 		queryKey: ["billing", "subscription"],
@@ -187,9 +191,6 @@ export default function BillingPage() {
 		},
 	});
 
-	const searchParams = useSearchParams();
-	const checkoutSuccess = searchParams.get("success") === "true";
-	const checkoutCanceled = searchParams.get("canceled") === "true";
 	const currentPriceId = subscription?.priceId;
 	const hasPlan = subscription?.priceId && subscription.status !== "inactive";
 	const HEALTHY_STATUSES: SubscriptionData["status"][] = ["active", "trialing", "cancelling"];
@@ -373,6 +374,16 @@ export default function BillingPage() {
 					</div>
 				)}
 			</div>
+		</div>
+	);
+}
+
+export default function BillingPage() {
+	return (
+		<div className="min-h-screen bg-zinc-950 text-zinc-200 p-8 font-sans antialiased">
+			<Suspense fallback={<div className="max-w-4xl mx-auto text-xs text-zinc-500">Loading billing info...</div>}>
+				<BillingContent />
+			</Suspense>
 		</div>
 	);
 }

@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import { env } from "../validation/env.zod.js";
 import path from "path";
 import { fileURLToPath } from "url";
+import mongoose from "mongoose";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,8 +16,8 @@ export const initializeWidgetCustomer = async (req: Request, res: Response, next
 	try {
 		const { tenantId, visitorToken } = req.body;
 
-		if (!tenantId) {
-			return res.status(400).json({ error: "Missing tenantId." });
+		if (!tenantId || !mongoose.isValidObjectId(tenantId)) {
+			return res.status(400).json({ error: "Missing or invalid tenantId." });
 		}
 
 		const tenant = await Tenant.findById(tenantId).lean();
@@ -187,7 +188,9 @@ export const getConversationMessages = async (req: Request, res: Response, next:
 		}
 
 		const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 100);
-		const beforeTimestamp = req.query.before ? new Date(req.query.before as string) : null;
+		const beforeTimestampParsed = req.query.before ? new Date(req.query.before as string) : null;
+		const beforeTimestamp =
+			beforeTimestampParsed && !isNaN(beforeTimestampParsed.getTime()) ? beforeTimestampParsed : null;
 
 		const query: any = { conversationId };
 		if (beforeTimestamp) {

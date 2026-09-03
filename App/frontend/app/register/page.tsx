@@ -54,9 +54,9 @@ export default function RegisterPage() {
 	const [checkoutError, setCheckoutError] = useState<string | null>(null);
 	const [redirecting, setRedirecting] = useState(false);
 
-	const PRICE_ID_MAP: Record<Exclude<Tier, "free">, string | undefined> = {
-		starter: process.env.NEXT_PUBLIC_STRIPE_PRICE_STARTER,
-		production: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRODUCTION,
+	const SUBSCRIPTION_PLAN_MAP: Record<Exclude<Tier, "free">, string | undefined> = {
+		starter: "starter_monthly",
+		production: "pro_monthly",
 	};
 
 	const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -85,8 +85,8 @@ export default function RegisterPage() {
 					// 3. Paid tiers: immediately kick off Checkout, same endpoint the billing page already uses.
 					setRedirecting(true);
 					try {
-						const priceId = PRICE_ID_MAP[selectedTier];
-						const { data } = await api.post("/api/billing/checkout", { priceId });
+						const planKey = SUBSCRIPTION_PLAN_MAP[selectedTier];
+						const { data } = await api.post("/api/billing/checkout", { planKey });
 
 						if (data.url) {
 							window.location.href = data.url;

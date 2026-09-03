@@ -74,7 +74,10 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 						case "new_message": {
 							const newMessage: MessageDoc = payload.data;
 							queryClient.setQueryData<MessageDoc[]>(["messages", newMessage.conversationId], (old) => {
-								if (!old) return [newMessage];
+								if (!old) {
+									queryClient.invalidateQueries({ queryKey: ["messages", newMessage.conversationId] });
+									return old;
+								}
 
 								const withoutTemp = payload.data.tempId ? old.filter((m) => m._id !== payload.data.tempId) : old;
 								// Avoid duplicates if the message already exists(race conditions/network retries)
@@ -123,7 +126,11 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 						case "conversation_settings_changed": {
 							// status + aiHandled changed on the active conversation
 							queryClient.setQueryData<ConversationDoc[]>(["conversations"], (oldChats) => {
-								if (!oldChats) return [];
+								if (!oldChats) {
+									queryClient.invalidateQueries({ queryKey: ["conversations"] });
+									return oldChats;
+								}
+
 								return oldChats.map((c) =>
 									c._id === payload.data.conversationId
 										? { ...c, status: payload.data.status, aiHandled: payload.data.aiHandled }

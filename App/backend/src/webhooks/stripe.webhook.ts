@@ -128,7 +128,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 					break;
 				}
 
-				// Case B: Monthly recurring automated payment clears or updates
+				// Case B: Monthly recurring automated payment clears or updates. doesnt go through checkout flow, but is triggered by Stripe's internal billing engine.
 				case "customer.subscription.updated": {
 					const subscription = event.data.object as stripeFramework.Subscription;
 					const stripeCustomerId = subscription.customer as string;

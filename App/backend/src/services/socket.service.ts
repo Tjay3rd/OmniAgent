@@ -55,7 +55,7 @@ export const initWebSocketServer = (wss: WebSocketServer) => {
 	wss.on("connection", (ws: ExtendedWebSocket) => {
 		ws.isAlive = true;
 		const verifiedTenantId = (ws as any).tenantId;
-		const verifiedUserId = (ws as any).userId;
+		const verifiedUserId = (ws as any).agentId;
 
 		ws.on("pong", () => {
 			ws.isAlive = true;
@@ -172,7 +172,7 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) =
 	const { text, tempId } = parsed.data;
 	const conversationId = parsed.data.conversationId || ws.conversationId;
 
-	if (!tenantId || !senderId || parsed.data.tenantId !== tenantId) {
+	if (!tenantId || !senderId) {
 		sendErrorMessage(ws, tempId, conversationId, "Unauthorized or mismatched tenant context");
 		return;
 	}
@@ -181,15 +181,6 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) =
 		sendErrorMessage(ws, tempId, undefined, "Missing conversation context");
 		return;
 	}
-
-	// 2. Commit message directly into MongoDB
-	const newMessage = await Message.create({
-		tenantId,
-		conversationId,
-		senderType,
-		senderId,
-		text,
-	});
 
 	// 1. Quickly update conversation metadata (time-stamp) so the listing view can sort by most recent activity.
 	const conversation = await Conversation.findOneAndUpdate(
@@ -202,6 +193,15 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) =
 		sendErrorMessage(ws, tempId, conversationId, "Conversation not found or unauthorized");
 		return;
 	}
+
+	// 2. Commit message directly into MongoDB after verifying conversation actually exists to prevent orphaned messages.
+	const newMessage = await Message.create({
+		tenantId,
+		conversationId,
+		senderType,
+		senderId,
+		text,
+	});
 
 	const flattenedMessage = newMessage.toJSON();
 
@@ -316,7 +316,7 @@ const handleStatusUpdate = async (ws: ExtendedWebSocket, data: any) => {
 		}
 		updatePayload.aiHandled = aiHandled;
 	}
-	if (assignedTo !== undefined || !mongoose.isValidObjectId(assignedTo)) {
+	if (assignedTo !== undefined) {
 		if (typeof assignedTo !== "string") {
 			sendErrorMessage(ws, conversationId, "Invalid assignedTo value");
 			return;
