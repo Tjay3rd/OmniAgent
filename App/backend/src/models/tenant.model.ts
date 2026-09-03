@@ -7,6 +7,8 @@ interface ITenant {
 	stripeCustomerId?: string;
 	subscriptionId?: string;
 	subscriptionStatus: "active" | "trialing" | "past_due" | "unpaid" | "inactive" | "cancelling";
+	plan?: "free" | "starter" | "production";
+	subscriptionPriceId?: string;
 	subscriptionPeriodStart?: Date;
 	subscriptionPeriodEnd?: Date;
 }
@@ -16,13 +18,15 @@ const tenantSchema = new Schema<ITenant>(
 		companyName: { type: String, required: true, trim: true },
 		email: { type: String, required: true, unique: true, trim: true },
 		subdomain: { type: String, required: true, unique: true, lowercase: true, trim: true },
-		stripeCustomerId: { type: String, required: true, sparse: true },
+		stripeCustomerId: { type: String, sparse: true },
 		subscriptionId: { type: String },
+		subscriptionPriceId: { type: String },
 		subscriptionStatus: {
 			type: String,
 			enum: ["active", "trialing", "past_due", "unpaid", "inactive", "cancelling"],
 			default: "inactive",
 		},
+		plan: { type: String, enum: ["free", "starter", "production"], default: "free" },
 		subscriptionPeriodStart: { type: Date },
 		subscriptionPeriodEnd: { type: Date },
 	},

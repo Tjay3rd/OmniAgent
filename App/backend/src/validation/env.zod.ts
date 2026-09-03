@@ -8,13 +8,18 @@ const envSchema = z.object({
 		.string()
 		.default("5000")
 		.transform((val) => parseInt(val, 10)),
-	MONGO_URI: z.url(),
+	MONGO_URI: z.string().refine((val) => val.startsWith("mongodb://") || val.startsWith("mongodb+srv://"), {
+		message: "Invalid Mongo URI format. Must start with mongodb:// or mongodb+srv://",
+	}),
 	JWT_ACCESS_SECRET: z.string().min(10, "JWT Secret must be at least 10 characters long"),
+	WIDGET_JWT_SECRET: z.string().min(10, "JWT Secret must be at least 10 characters long"),
 	JWT_REFRESH_SECRET: z.string().min(10, "JWT Secret must be at least 10 characters long"),
 	NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 	STRIPE_SECRET_KEY: z.string().min(10, "Stripe Secret Key must be at least 10 characters long"),
 	STRIPE_WEBHOOK_SECRET: z.string().min(10, "Stripe Webhook Secret must be at least 10 characters long"),
 	FRONTEND_URL: z.url(),
+	STRIPE_PRICE_STARTER: z.string().min(29, "Price Id is must be a 30 character string "),
+	STRIPE_PRICE_PRODUCTION: z.string().min(29, "Price Id must be a 30 character string"),
 });
 // Validate process.env against the schema
 const parsedEnv = envSchema.safeParse(process.env);

@@ -49,8 +49,5 @@ const agentConfigSchema = new Schema<IAgentConfig>(
 	{ timestamps: true },
 );
 
-// High-speed index lookup for the live socket thread engine
-agentConfigSchema.index({ tenantId: 1 });
-
 const AgentConfig = model<IAgentConfig>("AgentConfig", agentConfigSchema);
 export default AgentConfig;

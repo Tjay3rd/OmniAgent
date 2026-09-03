@@ -4,6 +4,7 @@ export const registrationSchema = z.object({
 	name: z.string().min(2).max(60).trim(),
 	email: z.email().toLowerCase().trim(),
 	companyName: z.string().min(2).max(60).trim(),
+	plan: z.enum(["free", "starter", "production"], "Plan must be one of: free, starter, production"),
 	// URL-safe subdomain validation rule
 	subdomain: z
 		.string()
@@ -59,9 +60,5 @@ export const acceptInviteSchema = z.object({
 
 export const createInviteSchema = z.object({
 	email: z.email("Invalid email address format.").toLowerCase().trim(),
-	role: z.enum(["admin", "agent"], "Role must be either 'admin' or 'agent'."),
-});
-
-export const assignedToSchema = z.object({
-	assignedTo: z.string().regex(/^[0-9a-fA-F]{24}$/, "Invalid assignedTo value."),
+	role: z.enum(["owner"], "Only the tenant owner can invite an agent or an admin"),
 });

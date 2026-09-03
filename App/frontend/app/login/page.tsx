@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useAuthActions } from "../../hooks/useAuthActions.js";
+import { useAuthActions } from "../../hooks/useAuthActions";
 
 export default function LoginPage() {
 	const { login, isLoggingIn, loginError } = useAuthActions();
@@ -10,7 +10,7 @@ export default function LoginPage() {
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
 
-	const handleSubmit = (e: React.FormEvent) => {
+	const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
 		e.preventDefault();
 		// Simply fire the React Query mutation engine
 		login({ email, password });
