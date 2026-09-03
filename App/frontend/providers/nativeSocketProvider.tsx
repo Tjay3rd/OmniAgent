@@ -10,15 +10,22 @@ interface SocketContextValue {
 	sendMessage: (event: string, data: unknown) => boolean;
 }
 
+interface ConversationActivity {
+	conversationId: string;
+	lastMessage: string;
+	assignedTo: string;
+	updatedAt: string;
+}
+
+interface NativeSocketProviderProps {
+	children: ReactNode;
+}
+
 const NativeSocketContext = createContext<SocketContextValue>({
 	socket: null,
 	isConnected: false,
 	sendMessage: () => false,
 });
-
-interface NativeSocketProviderProps {
-	children: ReactNode;
-}
 
 export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 	const queryClient = useQueryClient();
@@ -68,9 +75,11 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 							const newMessage: MessageDoc = payload.data;
 							queryClient.setQueryData<MessageDoc[]>(["messages", newMessage.conversationId], (old) => {
 								if (!old) return [newMessage];
-								const existing = old.some((m) => m._id === newMessage._id);
-								if (existing) return old; // Avoid duplicates if the message already exists
-								const withoutTemp = old.filter((m) => m._id !== payload.data.tempId);
+
+								const withoutTemp = payload.data.tempId ? old.filter((m) => m._id !== payload.data.tempId) : old;
+								// Avoid duplicates if the message already exists(race conditions/network retries)
+								if (withoutTemp.some((m) => m._id === newMessage._id)) return withoutTemp;
+
 								return [...withoutTemp, newMessage];
 							});
 
@@ -87,10 +96,26 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 						}
 
 						case "conversation_activity": {
-							const updatedChat: ConversationDoc = payload.data;
+							const updatedChat: ConversationActivity = payload.data;
 							queryClient.setQueryData<ConversationDoc[]>(["conversations"], (oldChats) => {
-								if (!oldChats) return [updatedChat];
-								return oldChats.map((c) => (c._id === updatedChat._id ? updatedChat : c));
+								if (!oldChats) return oldChats;
+								const known = oldChats.some((c) => c._id === updatedChat.conversationId);
+								if (!known) {
+									// The conversation is not cached yet; refetch instead of inserting a partial doc.
+									queryClient.invalidateQueries({ queryKey: ["conversations"] });
+									return oldChats;
+								}
+								return oldChats
+									.map((c) =>
+										c._id === updatedChat.conversationId
+											? {
+													...c,
+													assignedTo: updatedChat.assignedTo !== undefined ? updatedChat.assignedTo : c.assignedTo,
+													updatedAt: new Date().toISOString(),
+												}
+											: c,
+									)
+									.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 							});
 							break;
 						}
@@ -105,6 +130,23 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 										: c,
 								);
 							});
+							break;
+						}
+
+						case "message_error": {
+							const { tempId, conversationId } = payload.data;
+							if (!tempId || !conversationId) break;
+
+							queryClient.setQueryData<MessageDoc[]>(["messages", conversationId], (old) =>
+								old?.map((m) => (m._id === tempId ? { ...m, status: "failed" } : m)),
+							);
+							break;
+						}
+
+						case "status_update_error": {
+							const { conversationId, message } = payload.data;
+							if (!conversationId || !message) break;
+							console.warn(`Failed to update status for conversation ${conversationId}: ${message}`);
 							break;
 						}
 

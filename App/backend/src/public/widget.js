@@ -1,10 +1,6 @@
 (function () {
 	"use strict";
 
-	// ---- Configuration -------------------------------------------------
-	const API_BASE = `https://${process.env.NEXT_PUBLIC_API}`; // change to your real API origin
-	const WS_URL = "wss://api.yourapp.com"; // change to your real WS origin
-
 	const currentScript = document.currentScript;
 	const tenantId = currentScript ? currentScript.getAttribute("data-tenant-id") : null;
 
@@ -12,6 +8,12 @@
 		console.error("[Widget] Missing data-tenant-id attribute on script tag.");
 		return;
 	}
+
+	// ---- Configuration -------------------------------------------------
+	// Default to the origin that served this script; allow an explicit override.
+	const scriptOrigin = new URL(currentScript.src, window.location.href).origin;
+	const API_BASE = currentScript.getAttribute("data-api-base") || scriptOrigin;
+	const WS_URL = currentScript.getAttribute("data-ws-base") || API_BASE.replace(/^http/, "ws");
 
 	// ---- Local state -----------------------------------------------------
 	const state = {
@@ -54,7 +56,7 @@
     .wgt-msg{margin-bottom:8px;max-width:80%;padding:8px 10px;border-radius:8px;
       line-height:1.4;word-wrap:break-word;}
     .wgt-msg.customer{background:#111827;color:#fff;margin-left:auto;}
-    .wgt-msg.agent,.wgt-msg.ai{background:#e5e7eb;color:#111827;margin-right:auto;}
+    .wgt-msg.agent,.wgt-msg.ai,.wgt-msg.admin,.wgt-msg.owner{background:#e5e7eb;color:#111827;margin-right:auto;}
     #wgt-identify{padding:8px 12px;border-top:1px solid #eee;font-size:12px;
       display:flex;gap:6px;}
     #wgt-identify input{flex:1;font-size:12px;padding:6px;border:1px solid #ddd;
@@ -92,6 +94,7 @@
 			class: `wgt-msg ${msg.senderType}`,
 			text: msg.text,
 		});
+		bubbleEl.dataset.messageId = msg._id;
 		messagesEl.appendChild(bubbleEl);
 		messagesEl.scrollTop = messagesEl.scrollHeight;
 	}
@@ -103,7 +106,7 @@
 
 	// ---- API calls -----------------------------------------------------
 	async function initCustomer() {
-		const res = await fetch(`${API_BASE}/api/widget/init`, {
+		const res = await fetch(`${API_BASE}/api/widget/customer/init`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ tenantId, visitorToken: state.token }),
@@ -125,14 +128,13 @@
 		localStorage.setItem("widgetConversationId", state.conversationId);
 	}
 
+	let messagesHistory;
 	async function loadHistory() {
-		const url =
-			`${API_BASE}/api/widget/conversations/${state.conversationId}` +
-			`/messages?visitorToken=${encodeURIComponent(state.token)}`;
-
-		const res = await fetch(url);
+		const url = `${API_BASE}/api/widget/chat/${state.conversationId}/messages`;
+		const res = await fetch(url, { headers: { Authorization: `Bearer ${state.token}` } });
 		const data = await res.json();
-		renderMessages(data.messages || []);
+		messagesHistory = data.messages || [];
+		renderMessages(messagesHistory);
 		state.hasLoadedHistory = true;
 	}
 
@@ -154,19 +156,7 @@
 	function connectSocket() {
 		if (state.socket && state.socket.readyState === WebSocket.OPEN) return;
 
-		const visitorId = state.token || "";
-		const conversationId = state.conversationId || "";
-
-		// Safely construct query params
-		const params = new URLSearchParams({
-			visitorId: visitorId,
-			conversationId: conversationId,
-		});
-
-		// Output URL will look like: wss://api.yourapp.com?visitorId=...&conversationId=...
-		const fullWsUrl = `${WS_URL}?${params.toString()}`;
-
-		const ws = new WebSocket(fullWsUrl);
+		const ws = new WebSocket(WS_URL);
 		state.socket = ws;
 
 		ws.onopen = () => {
@@ -175,6 +165,7 @@
 					event: "join_conversation",
 					data: {
 						conversationId: state.conversationId,
+						visitorToken: state.token,
 					},
 				}),
 			);
@@ -194,13 +185,27 @@
 			}
 
 			if (payload.event === "new_message") {
-				renderMessage(payload.data);
+				//prevent displaying same message bubble twice on message sent confirmation(tempId echo)
+				const idx = messagesHistory.findIndex((m) => m._d === payload.data.tempId);
+				if (idx !== -1) {
+					messagesHistory[idx] = payload.data;
+					const node = messagesEl.querySelector(`[data-message-id="${payload.data.tempId}"]`);
+					if (node) {
+						node.textContent = payload.data.text;
+						node.dataset.messageId = payload.data._id;
+					} else {
+						renderMessage(payload.data);
+					}
+				} else {
+					//Message is from AI or human agent
+					messagesHistory.push(payload.data);
+					renderMessage(payload.data);
+				}
 			}
 		};
 
 		ws.onclose = () => {
-			// simple fixed-delay reconnect — good enough for a widget;
-			// doesn't need the dashboard's full backoff logic
+			// simple fixed-delay reconnect — good enough for a widget; doesn't need the dashboard's full backoff logic
 			setTimeout(() => {
 				if (state.isOpen) connectSocket();
 			}, 3000);
@@ -211,20 +216,21 @@
 		if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return;
 
 		const tempId = `temp-${Date.now()}`;
+		const newMessage = {
+			event: "send_message",
+			data: {
+				_id: tempId,
+				tenantId,
+				conversationId: state.conversationId,
+				senderType: "customer",
+				text,
+			},
+		};
+		messagesHistory.push(newMessage.data);
 
-		renderMessage({ senderType: "customer", text });
+		renderMessage(newMessage.data);
 
-		state.socket.send(
-			JSON.stringify({
-				event: "send_message",
-				data: {
-					conversationId: state.conversationId,
-					senderType: "customer",
-					text,
-					tempId,
-				},
-			}),
-		);
+		state.socket.send(JSON.stringify(newMessage));
 	}
 
 	// ---- Event wiring -----------------------------------------------------

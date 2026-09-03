@@ -59,7 +59,7 @@ export default function RegisterPage() {
 		production: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRODUCTION,
 	};
 
-	const handleSubmit = async (e: React.SubmitEvent<HTMLFormElement>) => {
+	const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
 		e.preventDefault();
 		setCheckoutError(null);
 

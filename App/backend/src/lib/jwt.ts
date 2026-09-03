@@ -5,15 +5,21 @@ import { Response } from "express";
 import RefreshToken from "../models/refreshToken.model.js";
 import { v4 as uuidv4 } from "uuid";
 
+interface CookieOptions {
+	httpOnly: boolean;
+	secure: boolean;
+	sameSite: "none" | "lax";
+}
+
 const FAMILY_MAX_MS = 90 * 24 * 60 * 60 * 1000; // 90 day hard cap
 export const refreshPath = "/api/refresh"; // The only endpoint that can set the refresh cookie
 export const ACCESS_TOKEN_TTL_MS = 45 * 60 * 1000; // 45 minutes
 export const IDLE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const hashToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
-export const baseOptions = {
+export const baseOptions: CookieOptions = {
 	httpOnly: true,
 	secure: env.NODE_ENV === "production",
-	sameSite: "none" as const,
+	sameSite: env.NODE_ENV === "production" ? "none" : "lax",
 };
 
 export const setTokenCookies = async (res: Response, accessToken: string, refreshToken: string) => {

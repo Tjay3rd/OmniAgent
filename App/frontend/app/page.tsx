@@ -150,8 +150,8 @@ export default function LandingPage() {
 								</div>
 								<div className="w-full md:w-auto bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-xs text-zinc-400 shadow-2xl">
 									<span className="text-blue-400">&lt;script</span> <span className="text-yellow-400">src</span>=
-									<span className="text-emerald-400">&quot;https://cdn.omniagent.com/widget.js&quot;</span>{" "}
-									<span className="text-yellow-400">data-tenant</span>=
+									<span className="text-emerald-400">&quot;https://cdn.omniagent.com/api/widget/script.js&quot;</span>{" "}
+									<span className="text-yellow-400">data-tenant-id</span>=
 									<span className="text-emerald-400">&quot;YOUR_ID&quot;</span>
 									<span className="text-blue-400">&gt;&lt;/script&gt;</span>
 								</div>

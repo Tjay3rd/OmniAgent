@@ -1,5 +1,5 @@
 import express from "express";
-import { createServer } from "http";
+import { createServer, IncomingMessage } from "http";
 import { WebSocketServer } from "ws";
 import mongoose from "mongoose";
 import cookieParser from "cookie-parser";
@@ -17,7 +17,6 @@ import billingRouter from "./routes/billing.routes.js";
 import { env } from "./validation/env.zod.js";
 import widgetRouter from "./routes/widget.routes.js";
 import jwt from "jsonwebtoken";
-import Conversation from "./models/chatConversation.model.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -27,22 +26,35 @@ app.set("trust proxy", 1);
 const wss = new WebSocketServer({ noServer: true });
 initWebSocketServer(wss);
 
-httpServer.on("upgrade", (request: Request, socket, head) => {
-	const { pathname, searchParams } = new URL(request.url!, `http://${request.headers.host}`);
+httpServer.on("upgrade", (request: IncomingMessage, socket, head) => {
+	try {
+		const { pathname } = new URL(request.url ?? "/", "http://localhost");
 
-	if (pathname === "/dashboard") {
-		return handleDashboardUpgrade(request, socket, head);
+		if (pathname === "/dashboard") {
+			return handleDashboardUpgrade(request, socket, head);
+		}
+
+		if (pathname === "/widget") {
+			try {
+				return wss.handleUpgrade(request, socket, head, (ws) => {
+					wss.emit("connection", ws, request);
+				});
+			} catch (error) {
+				socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+				socket.destroy();
+			}
+		}
+
+		socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+		socket.destroy();
+	} catch (error) {
+		socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+		socket.destroy();
+		return;
 	}
-
-	if (pathname === "/widget") {
-		return handleWidgetUpgrade(request, socket, head, searchParams);
-	}
-
-	socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-	socket.destroy();
 });
 
-const handleDashboardUpgrade = (request: Request, socket: any, head: any) => {
+const handleDashboardUpgrade = (request: IncomingMessage, socket: any, head: any) => {
 	const cookies = parseCookie(request.headers.cookie || "");
 	const token = cookies.accessToken;
 	if (!token) {
@@ -69,59 +81,13 @@ const handleDashboardUpgrade = (request: Request, socket: any, head: any) => {
 
 	wss.handleUpgrade(request, socket, head, (ws) => {
 		// Attach the verified payload to the WebSocket instance
+		(ws as any).agentId = payload?.id;
 		(ws as any).tenantId = payload?.tenantId;
-		(ws as any).userId = payload?.id;
-		(ws as any).connectionType = "admin";
+		(ws as any).connectionType = payload?.role; // "owner" | "admin" | "agent"
 		(ws as any).senderType = payload?.role;
 
 		wss.emit("connection", ws, request);
 	});
-};
-
-const handleWidgetUpgrade = async (request: Request, socket: any, head: any, searchParams: URLSearchParams) => {
-	const visitorToken = searchParams.get("visitorToken");
-	const conversationId = searchParams.get("conversationId");
-
-	if (!visitorToken || !conversationId) {
-		socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
-		socket.destroy();
-		return;
-	}
-
-	try {
-		let decoded: { customerId: string; tenantId: string };
-		try {
-			decoded = jwt.verify(visitorToken, env.WIDGET_JWT_SECRET!) as typeof decoded;
-		} catch {
-			socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-			socket.destroy();
-			return;
-		}
-
-		const conversation = await Conversation.findOne({
-			_id: conversationId,
-			tenantId: decoded.tenantId,
-			customerId: decoded.customerId,
-		}).lean();
-
-		if (!conversation) {
-			socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-			socket.destroy();
-			return;
-		}
-
-		wss.handleUpgrade(request, socket, head, (ws) => {
-			(ws as any).tenantId = decoded.tenantId;
-			(ws as any).customerId = decoded.customerId;
-			(ws as any).conversationId = conversationId;
-
-			wss.emit("connection", ws, request);
-		});
-	} catch (error) {
-		socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-		socket.destroy();
-		return;
-	}
 };
 
 // 2. standard security headers (CSP, HSTS, X-Content-Type-Options, etc.).

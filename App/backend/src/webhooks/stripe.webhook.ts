@@ -4,6 +4,7 @@ import Tenant from "../models/tenant.model.js";
 import { env } from "../validation/env.zod.js";
 import ProcessedWebhook from "../models/processedWebhook.model.js";
 import { Tier } from "../types/customTypes.js";
+import { randomUUID } from "crypto";
 
 // Initialize Stripe instance with secure backend environment token
 const stripe = new stripeFramework(env.STRIPE_SECRET_KEY || "");
@@ -30,6 +31,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 	const STALE_LOCK_MS = 30_000;
 	const now = Date.now();
 	const staleThreshold = new Date(now - STALE_LOCK_MS);
+	const attemptId = randomUUID();
 	let lockAcquired = false;
 
 	//Step 1 Atomic lock acquisition: Attempt to find and lock the event for processing, ensuring no other worker is handling it concurrently.
@@ -38,14 +40,14 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 		// A) The document does not exist yet (upsert: true)
 		// B) The status is 'failed' (retry allowed)
 		// C) The status is 'processing' BUT it timed out / went stale (dead worker takeover)
-		const doc = await ProcessedWebhook.findOneAndUpdate(
+		await ProcessedWebhook.findOneAndUpdate(
 			{
 				eventId: event.id,
 				$or: [{ status: "failed" }, { status: "processing", lastAttemptAt: { $lt: staleThreshold } }],
 			},
 			{
 				$setOnInsert: { eventType: event.type },
-				$set: { status: "processing", lastAttemptAt: new Date(now), errorMessage: null },
+				$set: { status: "processing", attemptId, lastAttemptAt: new Date(now), errorMessage: null },
 			},
 			{ upsert: true, new: false },
 		);
@@ -181,14 +183,14 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 					// Log unhandled hooks quietly so we don't spam errors for events we don't care about
 					console.log(`Stripe unhandled operational event received: ${event.type}`);
 			}
-			await ProcessedWebhook.updateOne({ eventId: event.id }, { $set: { status: "completed" } });
+			await ProcessedWebhook.updateOne({ eventId: event.id, attemptId }, { $set: { status: "completed" } });
 			// Return a clean 200 OK block to acknowledge safe processing receipt to Stripe's servers
 			return res.status(200).json({ received: true });
 		} catch (dbError: any) {
 			console.error("Database sync failure inside webhook execution:", dbError);
 			// mark as "failed" so Stripe's automatic retry finds no "completed" record and falls through the early-bail check above to reprocess it.
 			await ProcessedWebhook.updateOne(
-				{ eventId: event.id },
+				{ eventId: event.id, attemptId },
 				{ $set: { status: "failed", errorMessage: dbError.message } },
 			).catch((markErr) => {
 				console.error("Could not mark webhook as failed:", markErr);

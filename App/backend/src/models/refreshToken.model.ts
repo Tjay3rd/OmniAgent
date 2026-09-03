@@ -27,13 +27,16 @@ const refreshTokenSchema = new Schema<IRefreshToken>({
 	familyId: { type: String, required: true },
 	isUsed: { type: Boolean, default: false },
 	expiresAt: { type: Date, required: true },
-	familyExpiresAt: { type: Date, required: true, expires: 0 }, // TTL index, auto-reaps on expiry. Default to 90 days from now.
+	familyExpiresAt: {
+		type: Date,
+		required: true,
+		default: () => new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+		expires: 0,
+	}, // TTL index, auto-reaps on expiry. Default to 90 days from now.
 });
 
 // Automatic cleanup index when token expires
 refreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-// High-speed lookup for rotation checks
-refreshTokenSchema.index({ tokenHash: 1 });
 
 const RefreshToken = model<IRefreshToken>("RefreshToken", refreshTokenSchema);
 export default RefreshToken;

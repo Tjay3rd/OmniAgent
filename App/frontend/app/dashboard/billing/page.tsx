@@ -182,7 +182,7 @@ export default function BillingPage() {
 			return data;
 		},
 		refetchInterval: (query) => {
-			const stillInactive = query.state.data?.status === "inactive";
+			const stillInactive = !Boolean(query.state.data?.priceId) && query.state.data?.status === "inactive";
 			return checkoutSuccess && stillInactive ? 1500 : false;
 		},
 	});
@@ -202,13 +202,13 @@ export default function BillingPage() {
 		currentPriceId === process.env.NEXT_PUBLIC_STRIPE_PRICE_PRODUCTION &&
 		HEALTHY_STATUSES.includes(subscription?.status ?? "inactive");
 
-	const handleUpgrade = async (priceId: string) => {
+	const handleUpgrade = async (planKey: string) => {
 		setLoading(true);
 		setError(null);
 
 		try {
 			// 1. Hit your Express backend to generate the hosted Stripe checkout session
-			const response = await api.post("api/billing/checkout", { priceId });
+			const response = await api.post("/api/billing/checkout", { planKey });
 
 			// 2. Extract the secure hosted URL returned from Stripe via your backend
 			const { url } = response.data;
@@ -221,9 +221,8 @@ export default function BillingPage() {
 			}
 		} catch (error) {
 			console.error("Stripe redirection failure:", error);
-			if (axios.isAxiosError(error) && error.response) {
-				setError(error.response?.data?.message || "Could not launch payment gateway.");
-			}
+			const errorMessage = axios.isAxiosError(error) ? error.response?.data?.message : undefined;
+			setError(errorMessage || "Could not launch payment gateway.");
 			setLoading(false);
 		}
 	};
@@ -316,7 +315,7 @@ export default function BillingPage() {
 							</ul>
 
 							<button
-								onClick={() => handleUpgrade(`${process.env.NEXT_PUBLIC_STRIPE_PRICE_STARTER}`)}
+								onClick={() => handleUpgrade("starter_monthly")}
 								disabled={loading || subLoading || isStarterActive}
 								className="w-full text-center py-2.5 rounded-lg text-xs	font-medium bg-zinc-900 border border-zinc-800	text-zinc-300 hover:bg-zinc-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
 							>
@@ -355,7 +354,7 @@ export default function BillingPage() {
 							</ul>
 
 							<button
-								onClick={() => handleUpgrade(`${process.env.NEXT_PUBLIC_STRIPE_PRICE_PRODUCTION}`)}
+								onClick={() => handleUpgrade("pro_monthly")}
 								disabled={loading || subLoading || isProductionActive}
 								className="w-full text-center py-2.5 rounded-lg text-xs	font-semibold bg-blue-600 hover:bg-blue-500 text-white transition flex items-center justify-center gap-2	disabled:bg-zinc-800 disabled:text-zinc-500	shadow-md shadow-blue-500/10"
 							>

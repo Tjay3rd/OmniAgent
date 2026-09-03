@@ -10,7 +10,7 @@ export default function LoginPage() {
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
 
-	const handleSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
+	const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
 		e.preventDefault();
 		// Simply fire the React Query mutation engine
 		login({ email, password });

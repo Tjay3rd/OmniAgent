@@ -1,14 +1,33 @@
 // app/(authenticated)/dashboard/settings/widget/page.tsx
 "use client";
 
-import { useState } from "react";
-import { useTenant } from "@/hooks/useTenant"; // however you access the logged-in tenant
+import { useEffect, useState } from "react";
+import { api } from "../../../../lib/api";
+import axios from "axios";
 
 export default function WidgetSettingsPage() {
-	const { tenant } = useTenant();
+	const [tenantId, setTenantId] = useState<string | null>(null);
 	const [copied, setCopied] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 
-	const embedCode = `<script src="https://${process.env.NEXT_PUBLIC_API_URL}/api/widget/script.js" data-tenant-id="${tenant?._id}"></script>`;
+	useEffect(() => {
+		const getTenantId = async () => {
+			try {
+				const response = await api.get("/api/widget/getTenantId");
+				setTenantId(response.data?.tenantId || null);
+			} catch (error) {
+				const message = axios.isAxiosError(error) ? error?.response?.data.error : "An unexpected error occurred.";
+				setError(message);
+			}
+		};
+
+		getTenantId();
+	}, []);
+
+	const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+	const embedCode = tenantId
+		? `<script src="${apiUrl}/api/widget/script.js" data-tenant-id="${tenantId}"></script>`
+		: "Loading...";
 
 	const handleCopy = () => {
 		navigator.clipboard.writeText(embedCode);
@@ -19,10 +38,19 @@ export default function WidgetSettingsPage() {
 	return (
 		<div className="space-y-2">
 			<p className="text-sm text-zinc-400">
-				Paste this snippet into your website, right before the closing &lt;/body&gt; tag.
+				Paste the snippet into your website, right before the closing &lt;/body&gt; tag.
 			</p>
-			<pre className="bg-zinc-900 p-3 rounded-lg text-xs overflow-x-auto">{embedCode}</pre>
-			<button onClick={handleCopy}>{copied ? "Copied!" : "Copy code"}</button>
+			{tenantId ? (
+				<>
+					<pre className="bg-zinc-900 p-3 rounded-lg text-xs overflow-x-auto">{embedCode}</pre>
+					<button onClick={handleCopy} disabled={!tenantId}>
+						{copied ? "Copied!" : "Copy code"}
+					</button>
+				</>
+			) : (
+				<p className="text-sm text-zinc-500">Loading your workspace…</p>
+			)}
+			{error && <p className="text-red-500 text-sm">{error}</p>}
 		</div>
 	);
 }

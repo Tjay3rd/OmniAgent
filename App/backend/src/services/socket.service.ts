@@ -2,9 +2,10 @@ import { WebSocketServer, WebSocket } from "ws";
 import jwt from "jsonwebtoken";
 import { env } from "../validation/env.zod.js";
 import Message from "../models/chatMessage.model.js";
+import User from "../models/user.model.js";
 import Conversation from "../models/chatConversation.model.js";
 import { generateAgentResponseStream } from "./ai.service.js";
-import { ObjectId } from "mongoose";
+import mongoose, { ObjectId } from "mongoose";
 import { messageSchema, statusUpdateSchema } from "../validation/socket.zod.js";
 
 // Custom type extension to store session metadata directly on the socket object
@@ -12,14 +13,13 @@ interface ExtendedWebSocket extends WebSocket {
 	isAlive?: boolean;
 	tenantId?: string;
 	conversationId?: string;
-	userId?: string;
+	agentId?: string;
 	customerId?: string;
 	senderType?: "owner" | "admin" | "agent" | "customer";
 }
 
 export interface ActualData {
 	conversationId: string;
-	lastMessage: string;
 	assignedTo: ObjectId | undefined;
 }
 
@@ -73,7 +73,12 @@ export const initWebSocketServer = (wss: WebSocketServer) => {
 						try {
 							decoded = jwt.verify(data.visitorToken, env.WIDGET_JWT_SECRET!) as typeof decoded;
 						} catch {
-							ws.send(JSON.stringify({ error: "Invalid or expired session" }));
+							ws.close(1008, "Unauthorized: Invalid token or conversation ID");
+							return;
+						}
+
+						if (!decoded.tenantId || !decoded.customerId) {
+							ws.close(1008, "Unauthorized: Missing tenant or customer context");
 							return;
 						}
 
@@ -83,14 +88,15 @@ export const initWebSocketServer = (wss: WebSocketServer) => {
 							customerId: decoded.customerId,
 						}).lean();
 
-						if (!conversation) {
-							ws.send(JSON.stringify({ error: "Conversation not found or access denied" }));
-							return;
-						}
-
 						ws.conversationId = data.conversationId;
 						ws.tenantId = decoded.tenantId;
 						ws.customerId = decoded.customerId;
+						ws.senderType = "customer";
+
+						if (!conversation) {
+							ws.close(1008, "Unauthorized: Conversation not found or mismatched");
+							return;
+						}
 
 						if (!conversationRooms.has(data.conversationId)) {
 							conversationRooms.set(data.conversationId, new Set());
@@ -139,34 +145,40 @@ export const initWebSocketServer = (wss: WebSocketServer) => {
 //HELPER FUNCTIONS
 // Helper 1: Database persistent engine & client broadcasting
 const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) => {
+	const sendErrorMessage = (
+		ws: ExtendedWebSocket,
+		tempId: string | undefined,
+		conversationId: string | undefined,
+		message: string,
+	) => {
+		ws.send(
+			JSON.stringify({
+				event: "message_error",
+				data: { tempId, conversationId, message },
+			}),
+		);
+	};
+
 	const parsed = messageSchema.safeParse(data);
+
 	if (!parsed.success) {
-		ws.send(JSON.stringify({ error: "Invalid payload data" }));
+		sendErrorMessage(ws, data?.tempId, data?.conversationId, "Invalid payload data");
 		return;
 	}
 
 	const tenantId = ws.tenantId;
-	const senderId = ws.userId;
 	const senderType = ws.senderType;
-
-	if (!tenantId || !senderId || parsed.data.tenantId !== tenantId) {
-		ws.send(JSON.stringify({ error: "Invalid tenant context" }));
-		return;
-	}
+	const senderId = senderType === "customer" ? ws.customerId : ws.agentId;
 	const { text, tempId } = parsed.data;
-
 	const conversationId = parsed.data.conversationId || ws.conversationId;
 
-	if (!conversationId) {
-		ws.send(JSON.stringify({ error: "Missing conversation context" }));
+	if (!tenantId || !senderId || parsed.data.tenantId !== tenantId) {
+		sendErrorMessage(ws, tempId, conversationId, "Unauthorized or mismatched tenant context");
 		return;
 	}
 
-	// 1. Quickly update conversation metadata (time-stamp) so the listing view can sort by most recent activity.
-	const conversation = await Conversation.findOne({ _id: conversationId, tenantId });
-
-	if (!conversation) {
-		ws.send(JSON.stringify({ error: "Conversation not found or unauthorized" }));
+	if (!conversationId) {
+		sendErrorMessage(ws, tempId, undefined, "Missing conversation context");
 		return;
 	}
 
@@ -179,7 +191,17 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) =
 		text,
 	});
 
-	await conversation.updateOne({ updatedAt: new Date() }); // Ensure the conversation's updatedAt reflects the latest message
+	// 1. Quickly update conversation metadata (time-stamp) so the listing view can sort by most recent activity.
+	const conversation = await Conversation.findOneAndUpdate(
+		{ _id: conversationId, tenantId },
+		{ $set: { updatedAt: new Date() } },
+		{ new: true },
+	);
+
+	if (!conversation) {
+		sendErrorMessage(ws, tempId, conversationId, "Conversation not found or unauthorized");
+		return;
+	}
 
 	const flattenedMessage = newMessage.toJSON();
 
@@ -205,13 +227,17 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) =
 			tenantId,
 			conversationId,
 			ws, // Pass this exact websocket channel to let the generator pipe tokens down.
+		}).catch((error) => {
+			console.error("AI stream failed", { conversationId, tenantId, error });
+			if (ws.readyState === WebSocket.OPEN) {
+				sendErrorMessage(ws, undefined, conversationId, "AI response generation failed");
+			}
 		});
 		console.log("AI is actively handling this. Processing streaming tokens...");
 	} else {
 		// THE AI IS MUTED. Alert the assigned agent's live dashboard view instead.
 		broadcastToDashboardRoom(tenantId, "conversation_activity", {
 			conversationId,
-			lastMessage: text,
 			assignedTo: conversation?.assignedTo, // Agent dashboard lights up red.
 		});
 		console.log("AI bypassed. Chat is under human command.");
@@ -252,15 +278,24 @@ const cleanRooms = (ws: ExtendedWebSocket) => {
 // Add this alongside your handleIncomingMessage helper in services/socket.service.ts
 
 const handleStatusUpdate = async (ws: ExtendedWebSocket, data: any) => {
+	const sendErrorMessage = (ws: ExtendedWebSocket, conversationId: string | undefined, message: string) => {
+		ws.send(
+			JSON.stringify({
+				event: "status_update_error",
+				data: { conversationId, message },
+			}),
+		);
+	};
+
 	const parsed = statusUpdateSchema.safeParse(data);
 	if (!parsed.success) {
-		ws.send(JSON.stringify({ error: "Invalid status update payload" }));
+		sendErrorMessage(ws, data?.conversationId, "Invalid status update payload");
 		return;
 	}
 	const { conversationId, status, aiHandled, assignedTo } = parsed.data;
 	const tenantId = ws.tenantId;
-	if (!tenantId) {
-		ws.send(JSON.stringify({ error: "Unauthorized socket tenant context" }));
+	if (!tenantId || !ws.agentId || !ws.senderType || ws.senderType === "customer") {
+		sendErrorMessage(ws, conversationId, "Unauthorized: Missing tenant context");
 		return;
 	}
 
@@ -269,21 +304,26 @@ const handleStatusUpdate = async (ws: ExtendedWebSocket, data: any) => {
 
 	if (status !== undefined) {
 		if (!["open", "snoozed", "closed"].includes(status)) {
-			ws.send(JSON.stringify({ error: "Invalid conversation status" }));
+			sendErrorMessage(ws, conversationId, "Invalid status value");
 			return;
 		}
 		updatePayload.status = status;
 	}
 	if (aiHandled !== undefined) {
 		if (typeof aiHandled !== "boolean") {
-			ws.send(JSON.stringify({ error: "Invalid aiHandled value" }));
+			sendErrorMessage(ws, conversationId, "Invalid aiHandled value");
 			return;
 		}
 		updatePayload.aiHandled = aiHandled;
 	}
-	if (assignedTo !== undefined) {
+	if (assignedTo !== undefined || !mongoose.isValidObjectId(assignedTo)) {
 		if (typeof assignedTo !== "string") {
-			ws.send(JSON.stringify({ error: "Invalid assignedTo value" }));
+			sendErrorMessage(ws, conversationId, "Invalid assignedTo value");
+			return;
+		}
+		const assignee = await User.exists({ _id: assignedTo, tenantId });
+		if (!assignee) {
+			sendErrorMessage(ws, conversationId, "Assignee not found in this workspace");
 			return;
 		}
 		updatePayload.assignedTo = assignedTo;
@@ -306,19 +346,13 @@ const handleStatusUpdate = async (ws: ExtendedWebSocket, data: any) => {
 
 	if (!updatedConversation) return;
 
-	// 4. Locate the last message string to fulfill your strict ActualData type mapping
-	const lastMessageDoc = await Message.findOne({ conversationId }).sort({ createdAt: -1 }).select("text").lean();
-
-	const resolvedLastMessage = lastMessageDoc?.text || "Conversation status updated.";
-
-	// 5. Structure the packet exactly to fit your strict ActualData interface specifications
+	// 4. Structure the packect data to broadcast to the dashboard room for live updates
 	const dashboardBroadcastPayload: ActualData = {
 		conversationId,
-		lastMessage: resolvedLastMessage,
 		assignedTo: updatedConversation?.assignedTo,
 	};
 
-	// 6. Broadcast changes across all active channels
+	// 5. Broadcast changes across all active channels
 	// Alert the workspace dashboard console layout to move tabs or update badges instantly
 	broadcastToDashboardRoom(tenantId, "conversation_activity", dashboardBroadcastPayload);
 

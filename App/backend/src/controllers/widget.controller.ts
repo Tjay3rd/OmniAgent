@@ -6,6 +6,10 @@ import Message from "../models/chatMessage.model.js";
 import jwt from "jsonwebtoken";
 import { env } from "../validation/env.zod.js";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export const initializeWidgetCustomer = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {
@@ -33,9 +37,16 @@ export const initializeWidgetCustomer = async (req: Request, res: Response, next
 					});
 
 					if (existingCustomer) {
+						const refreshedToken = jwt.sign(
+							{ customerId: existingCustomer._id.toString(), tenantId },
+							env.WIDGET_JWT_SECRET!,
+							{
+								expiresIn: "30d",
+							},
+						);
 						return res.status(200).json({
 							message: "Welcome back",
-							token: visitorToken,
+							token: refreshedToken,
 							customer: existingCustomer,
 						});
 					}
@@ -45,14 +56,14 @@ export const initializeWidgetCustomer = async (req: Request, res: Response, next
 			}
 		}
 
-		// New visitor (or the old token no longer resolves to anything)
+		// New visitor (or the old token is expired or no longer resolves to anything)
 		const newCustomer = await Customer.create({
 			tenantId,
 			name: "Anonymous Guest",
 		});
 
 		const token = jwt.sign({ customerId: newCustomer._id.toString(), tenantId }, env.WIDGET_JWT_SECRET!, {
-			expiresIn: "90d",
+			expiresIn: "30d",
 		});
 
 		return res.status(201).json({
@@ -149,7 +160,9 @@ export const getOrCreateConversation = async (req: Request, res: Response, next:
 export const getConversationMessages = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {
 		const { conversationId } = req.params;
-		const { visitorToken } = req.query as { visitorToken?: string };
+		const visitorToken = req.headers.authorization?.startsWith("Bearer ")
+			? req.headers.authorization.slice(7).trim()
+			: undefined;
 
 		if (!visitorToken) {
 			return res.status(400).json({ error: "Missing visitor session token." });
@@ -162,7 +175,7 @@ export const getConversationMessages = async (req: Request, res: Response, next:
 			return res.status(401).json({ error: "Invalid or expired session." });
 		}
 
-		// Ownership check — this is the piece that was missing before
+		// Ownership check
 		const conversation = await Conversation.findOne({
 			_id: conversationId,
 			tenantId: decoded.tenantId,
@@ -173,7 +186,7 @@ export const getConversationMessages = async (req: Request, res: Response, next:
 			return res.status(404).json({ error: "Conversation not found or access denied." });
 		}
 
-		const limit = parseInt(req.query.limit as string) || 50;
+		const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 100);
 		const beforeTimestamp = req.query.before ? new Date(req.query.before as string) : null;
 
 		const query: any = { conversationId };
@@ -228,8 +241,24 @@ export const humanTakeoverHandler = async (req: Request, res: Response, next: Ne
 export const widgetScript = async (req: Request, res: Response) => {
 	try {
 		res.setHeader("Access-Control-Allow-Origin", "*");
-		res.sendFile(path.join(__dirname, "../public/widget.js"));
+		res.sendFile(path.join(__dirname, "../public/widget.js"), (error) => {
+			if (error) {
+				console.error("Failed to load widget script:", error);
+				if (!res.headersSent) {
+					res.status(500).send('console.error("Failed to load widget script");');
+				}
+			}
+		});
 	} catch (error) {
 		res.status(500).send('console.error("Failed to load widget script");');
+	}
+};
+
+export const getTenantId = async (req: Request, res: Response) => {
+	const tenantId = req.user?.tenantId;
+	if (tenantId) {
+		res.status(200).json({ tenantId });
+	} else {
+		res.status(404).json({ error: "Tenant ID not found" });
 	}
 };

@@ -142,7 +142,7 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 		const tokenDoc = await RefreshToken.findOne({ tokenHash: oldTokenHash });
 
 		// BREACH DETECTED (Case 1): Token not in DB but cookie exists?
-		// Attacker might be reusing a token from a wiped family.
+		// Attacker might be reusing a token from a wiped family, or simply a fake made up token.
 		if (!tokenDoc) {
 			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
 			res.clearCookie("refreshToken", { ...baseOptions, path: "/api/refresh" });
@@ -169,43 +169,83 @@ export const handleTokenRefresh = async (req: Request, res: Response, next: Next
 				familyId: tokenDoc.familyId,
 			});
 			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
-
 			res.clearCookie("refreshToken", { ...baseOptions, path: "/api/refresh" });
 			return res.status(401).json({
 				error: "Session expired. Please re-login.",
 			});
 		}
 
-		// 3. Mark the current token as used immediately
-		tokenDoc.isUsed = true;
-		await tokenDoc.save();
+		let newAccessToken!: string;
+		let newRawRefreshToken!: string;
+		let breach = false;
 
 		// Sliding idle window, but capped at family ceiling
 		const slidingExpiry = now + IDLE_WINDOW_MS;
 		const newExpiresAt = new Date(Math.min(slidingExpiry, familyExpiresAt.getTime()));
 		const remainingMs = newExpiresAt.getTime() - now;
 
-		// 4. Generate a fresh access token.
-		const newAccessToken = jwt.sign(
-			{ id: tokenDoc.userId, tenantId: tokenDoc.tenantId, role: tokenDoc.role },
-			env.JWT_ACCESS_SECRET,
-			{ expiresIn: ACCESS_TOKEN_TTL_MS / 1000 },
-		);
+		const session = await mongoose.startSession();
+		try {
+			await session.withTransaction(async () => {
+				// 3. Mark the current token as used immediately
+				const claimedToken = await RefreshToken.findOneAndUpdate(
+					{ tokenHash: oldTokenHash, isUsed: false },
+					{ $set: { isUsed: true } },
+					{ session, new: true },
+				);
 
-		//5. Generate a fresha opaque refresh token and store it in the DB.
-		const newRawRefreshToken = crypto.randomBytes(64).toString("hex");
-		const newRefreshTokenHash = hashToken(newRawRefreshToken);
+				if (!claimedToken) {
+					// no match: token doesn't exist, or already used — treat as breach
+					breach = true;
+					const staleToken = await RefreshToken.findOne({
+						tokenHash: oldTokenHash,
+					}).session(session);
 
-		await RefreshToken.create({
-			userId: tokenDoc.userId,
-			tenantId: tokenDoc.tenantId,
-			role: tokenDoc.role,
-			tokenHash: newRefreshTokenHash,
-			familyId: tokenDoc.familyId,
-			familyExpiresAt: familyExpiresAt, // never changes
-			isUsed: false,
-			expiresAt: newExpiresAt, // slides forward each time
-		});
+					if (staleToken) {
+						await RefreshToken.deleteMany({ familyId: staleToken.familyId }, { session });
+					}
+
+					return;
+				}
+
+				// 4. Generate a fresh access token.
+				newAccessToken = jwt.sign(
+					{ id: tokenDoc.userId, tenantId: tokenDoc.tenantId, role: tokenDoc.role },
+					env.JWT_ACCESS_SECRET,
+					{ expiresIn: ACCESS_TOKEN_TTL_MS / 1000 },
+				);
+
+				//5. Generate a fresha opaque refresh token and store it in the DB.
+				newRawRefreshToken = crypto.randomBytes(64).toString("hex");
+				const newRefreshTokenHash = hashToken(newRawRefreshToken);
+
+				await RefreshToken.create(
+					[
+						{
+							userId: tokenDoc.userId,
+							tenantId: tokenDoc.tenantId,
+							role: tokenDoc.role,
+							tokenHash: newRefreshTokenHash,
+							familyId: tokenDoc.familyId,
+							familyExpiresAt: familyExpiresAt, // never changes
+							isUsed: false,
+							expiresAt: newExpiresAt, // slides forward each time
+						},
+					],
+					{ session },
+				);
+			});
+		} finally {
+			await session.endSession();
+		}
+
+		if (breach) {
+			res.clearCookie("accessToken", { ...baseOptions, path: "/" });
+			res.clearCookie("refreshToken", { ...baseOptions, path: "/api/refresh" });
+			return res.status(403).json({
+				error: "Security breach detected. All active sessions revoked.",
+			});
+		}
 
 		// 6. Deploy updated httpOnly cookies safely to browser storage
 

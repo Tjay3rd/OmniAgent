@@ -50,7 +50,7 @@ api.interceptors.response.use(
 
 			try {
 				// Hit your token rotation endpoint on the backend
-				await api.post("/api/admin/refresh", {});
+				await api.post("/api/refresh", {});
 
 				processQueue(null);
 				return api(originalRequest);

@@ -10,7 +10,12 @@ import { useNativeSocket } from "@/providers/nativeSocketProvider";
 
 export default function DashboardPage() {
 	const queryClient = useQueryClient();
-	const { data: conversations, isLoading: isConversationsLoading } = useConversations();
+	const {
+		data: conversations,
+		isLoading: isConversationsLoading,
+		isError: isConversationsError,
+		error: conversationsErrorObject,
+	} = useConversations();
 	const { activeConversationId, setActiveConversationId, draftsByConversation, updateDraft, clearDraft } =
 		useChatStore();
 	const takeover = useTakeoverConversation();
@@ -32,17 +37,15 @@ export default function DashboardPage() {
 
 	useEffect(() => {
 		if (!activeConversationId || !isConnected) return;
-		sendMessage("join_conversation", { conversationId: activeConversationId });
+		sendMessage("join_tenant_dashboard", { conversationId: activeConversationId });
 	}, [activeConversationId, isConnected, sendMessage]);
 
 	// Handle firing a text response out over the network interface
 
-	const handleSendMessage = (e: React.FormEvent) => {
-		e.preventDefault();
-		if (!currentDraft.trim() || !activeConversationId || !isConnected) return;
-
-		const text = currentDraft.trim();
-		const tempId = `temp-${crypto.randomUUID()}`;
+	const sendChatMessage = (text: string, tempId: string) => {
+		if (!activeConversationId || !isConnected || !activeConversation) {
+			return false;
+		}
 
 		const sent = sendMessage("send_message", {
 			conversationId: activeConversationId,
@@ -51,28 +54,42 @@ export default function DashboardPage() {
 		});
 
 		if (sent) {
-			clearDraft(activeConversationId);
-
-			// Optimistic local render only — the real doc arrives
 			queryClient.setQueryData<MessageDoc[]>(["messages", activeConversationId], (old) => [
-				...(old || []),
+				...(old || []).filter((m) => m._id !== tempId),
 				{
 					_id: tempId,
-					tenantId: activeConversation?.tenantId,
+					tenantId: activeConversation.tenantId,
 					conversationId: activeConversationId,
 					senderType: "agent",
 					text,
 					senderId: "",
 					createdAt: new Date().toISOString(),
-					pending: true,
-				} as MessageDoc,
+					status: "sending",
+				},
 			]);
 		} else {
-			// roll back the optimistic entry if the socket wasn't open
 			queryClient.setQueryData<MessageDoc[]>(["messages", activeConversationId], (old) =>
-				old?.filter((m) => m._id !== tempId),
+				old?.map((m) => (m._id === tempId ? { ...m, status: "failed" } : m)),
 			);
 		}
+
+		return sent;
+	};
+
+	const handleSendMessage = (e: React.FormEvent) => {
+		e.preventDefault();
+		if (!currentDraft.trim() || !activeConversationId) return;
+
+		const text = currentDraft.trim();
+		const tempId = `temp-${crypto.randomUUID()}`;
+
+		if (sendChatMessage(text, tempId)) {
+			clearDraft(activeConversationId);
+		}
+	};
+
+	const handleRetry = (msg: MessageDoc) => {
+		sendChatMessage(msg.text, msg._id);
 	};
 
 	if (isConversationsLoading) {
@@ -81,6 +98,18 @@ export default function DashboardPage() {
 				<div className="space-y-2 text-center">
 					<div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-700 border-t-emerald-500 mx-auto" />
 					<p className="text-xs tracking-wider">LOADING SECURE WORKSPACE...</p>
+				</div>
+			</div>
+		);
+	}
+	if (isConversationsError) {
+		return (
+			<div className="flex h-screen w-full items-center justify-center bg-zinc-950 text-zinc-400 font-sans">
+				<div className="space-y-2 text-center">
+					<div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-700 border-t-emerald-500 mx-auto" />
+					<p className="text-lg text-red-600 tracking-wider">
+						ERROR LOADING CONVERSATIONS, RELOAD PAGE...`${conversationsErrorObject.message}`
+					</p>
 				</div>
 			</div>
 		);
@@ -199,10 +228,19 @@ export default function DashboardPage() {
 														: isAI
 															? "bg-blue-950/40 border border-blue-900/40 text-blue-200"
 															: "bg-emerald-950/40 border border-emerald-900/40 text-emerald-200"
-												}`}
+												} ${msg.status === "failed" ? "opacity-60 border-red-900/40" : ""}`}
 											>
 												{msg.text}
 											</div>
+
+											{msg.status === "failed" && (
+												<button
+													onClick={() => handleRetry(msg)}
+													className="text-[10px] text-red-400 hover:text-red-300 mt-1"
+												>
+													Failed to send — tap to retry
+												</button>
+											)}
 										</div>
 									);
 								})
@@ -211,8 +249,8 @@ export default function DashboardPage() {
 									<Clock className="h-5 w-5 text-zinc-600 mx-auto" />
 									<h3 className="text-xs font-semibold text-zinc-400">No Messages Logged</h3>
 									<p className="text-xs text-zinc-500 leading-relaxed">
-										This open session tracking channel currently has zero logged historical operations frames inside
-										MongoDB.
+										This open session tracking channel currently has zero logged historical operations frames inside the
+										database.
 									</p>
 								</div>
 							)}
