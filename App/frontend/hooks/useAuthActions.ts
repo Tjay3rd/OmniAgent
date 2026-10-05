@@ -22,6 +22,7 @@ type LoginInput = {
 
 interface BackendErrorResponse {
 	error: string;
+	errors?: { field: string; message: string }[];
 }
 
 //Custom hook that combines our Axios instance, React Query mutations, and our Zustand store updates.
@@ -66,16 +67,19 @@ export const useAuthActions = () => {
 	});
 
 	const regError = registerMutation.error as AxiosError<BackendErrorResponse>;
+
 	const logError = loginMutation.error as AxiosError<BackendErrorResponse>;
 
 	return {
 		register: registerMutation.mutate,
 		isRegistering: registerMutation.isPending,
 		registerError: regError?.response?.data?.error || regError?.message || null,
+		registerFieldErrors: regError?.response?.data?.errors || [],
 
 		login: loginMutation.mutate,
 		isLoggingIn: loginMutation.isPending,
 		loginError: logError?.response?.data?.error || logError?.message || null,
+		loginFieldErrors: logError?.response?.data?.errors || [],
 
 		logout: logoutMutation.mutate,
 	};

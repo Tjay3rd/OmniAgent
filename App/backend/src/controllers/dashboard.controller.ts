@@ -2,6 +2,14 @@ import { Request, Response, NextFunction } from "express";
 import Conversation from "../models/chatConversation.model.js";
 import Message from "../models/chatMessage.model.js";
 import { broadcastToDashboardRoom, ActualData } from "../services/socket.service.js";
+import AgentConfig from "../models/agentConfig.model.js";
+import { agentConfigSchema, agentConfigPatchSchema } from "omni-shared";
+
+function toDto(doc: { modelName: string; temperature: number; systemPrompt: string; isActive: boolean }) {
+	// Return only what the form knows about, not _id/tenantId/etc.
+	const { modelName, temperature, systemPrompt, isActive } = doc;
+	return { modelName, temperature, systemPrompt, isActive };
+}
 
 /**
  * 1. GET WORKSPACE CONVERSATIONS
@@ -30,8 +38,43 @@ export const getWorkspaceConversations = async (req: Request, res: Response, nex
 	}
 };
 
+/** 2. Human Takeover Handler **/
+export const humanTakeoverHandler = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+	try {
+		const { conversationId } = req.params;
+
+		// req.user is populated by the requireAuth middleware
+		if (!req.user) {
+			return res.status(401).json({ error: "Unauthenticated" });
+		}
+
+		// Atomically shift control away from the AI to this specific human agent
+		const conversation = await Conversation.findOneAndUpdate(
+			{ _id: conversationId, tenantId: req.user.tenantId },
+			{
+				$set: {
+					aiHandled: false, // Turn off the AI engine for this chat
+					assignedTo: req.user.id, // Lock it to this human agent
+				},
+			},
+			{ new: true }, // Return the updated document
+		);
+
+		if (!conversation) {
+			return res.status(404).json({ error: "Conversation not found in your workspace." });
+		}
+
+		return res.status(200).json({
+			message: "AI muted. You have successfully taken control of this conversation.",
+			conversation,
+		});
+	} catch (error) {
+		next(error);
+	}
+};
+
 /*
- * 2. CLOSE CONVERSATION
+ * 3. CLOSE CONVERSATION
  * PATCH /api/dashboard/conversations/:conversationId/close
  * Archives a resolved ticket, locks out the conversation, and sets the system back to baseline status. Updates conversation status and broadcasts fully-typed data to open dashboard socket channels.
  */
@@ -80,3 +123,53 @@ export const closeConversation = async (req: Request, res: Response, next: NextF
 		next(error);
 	}
 };
+
+/**4. Tenant AI Settings */
+export async function agentConfigFull(req: Request, res: Response, next: NextFunction): Promise<any> {
+	const { tenantId, ...rest } = req.body;
+
+	if (!tenantId) return res.status(401).json({ error: "Unauthorized, missing key credentials" });
+
+	const parsed = agentConfigSchema.safeParse(rest);
+	if (!parsed.success) {
+		return res.status(400).json({ errors: parsed.error.issues });
+	}
+
+	try {
+		const created = await AgentConfig.create({ tenantId, ...parsed.data });
+		return res.status(201).json(toDto(created));
+	} catch (err: unknown) {
+		// Your unique index on tenantId enforces one config per tenant.
+		if ((err as { code?: number }).code === 11000) {
+			return res.status(409).json({ error: "Agent Config FIle Already Exists" });
+		}
+		next(err);
+	}
+}
+
+export async function agentConfigTweak(req: Request, res: Response, next: NextFunction): Promise<any> {
+	try {
+		const { tenantId, ...rest } = req.body;
+
+		if (!tenantId) return res.status(401).json({ error: "Unauthorized, missing key credentials" });
+
+		const parsed = agentConfigPatchSchema.safeParse(rest);
+		if (!parsed.success) {
+			return res.status(400).json({ errors: parsed.error.issues });
+		}
+
+		const updated = await AgentConfig.findOneAndUpdate(
+			{ tenantId },
+			{ $set: parsed.data },
+			{ new: true, runValidators: true, upsert: false },
+		);
+
+		if (!updated) {
+			return res.status(404).json({ error: "Agent config not found" });
+		}
+
+		return res.status(20).json(toDto(updated));
+	} catch (err) {
+		next(err);
+	}
+}

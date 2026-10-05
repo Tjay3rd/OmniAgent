@@ -25,7 +25,7 @@ export function useTakeoverConversation() {
 		mutationFn: async (conversationId: string) => {
 			// Hits Express backend endpoint to set assignedTo and wasFirstHandledByHumanAt
 			const response = await api.patch<{ conversation: ConversationDoc }>(
-				`/api/widget/chat/${conversationId}/takeover`,
+				`/api/dashboard/conversations/${conversationId}/takeover`,
 			);
 			return response.data.conversation;
 		},

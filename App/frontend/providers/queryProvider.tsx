@@ -11,7 +11,7 @@ export default function QueryProvider({ children }: { children: ReactNode }) {
 				defaultOptions: {
 					queries: {
 						staleTime: 1000 * 60 * 5, // Cache data for 5 minutes before background refetching
-						retry: 1, // Fail fast on network dropouts to improve user snappiness
+						retry: 2, // Fail fast on network dropouts to improve user snappiness
 						refetchOnWindowFocus: false,
 					},
 				},

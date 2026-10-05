@@ -32,8 +32,13 @@ adminRouter.post("/logout", handleLogout);
 // --- PROTECTED WORKSPACE MANAGEMENT ENDPOINTS ---
 adminRouter.use(requireAuth);
 
-// Only an 'owner' can adjust settings, and the body payload must pass Zod validation
-adminRouter.patch("/settings/ai-agent", restrictTo("owner"), validate(agentConfigSchema), updateAgentConfig);
+// Only an 'owner' can invite agents/admins and these can in turn adjust settings, and the body payload must pass Zod validation
+adminRouter.patch(
+	"/settings/ai-agent",
+	restrictTo("owner", "admin", "agent"),
+	validate(agentConfigSchema),
+	updateAgentConfig,
+);
 adminRouter.post("/invite/create", restrictTo("owner"), validate(createInviteSchema), createInviteHandler);
 
 export default adminRouter;

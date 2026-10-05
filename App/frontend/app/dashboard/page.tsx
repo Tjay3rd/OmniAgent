@@ -5,17 +5,13 @@ import { useChatStore, MessageDoc } from "@/store/useChatStore";
 import { useConversations, useTakeoverConversation } from "@/hooks/useConversations";
 import { useMessages } from "@/hooks/useMessages";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bot, User, MessageSquare, Clock, Send, ChevronRight, Shield } from "lucide-react";
+import { Bot, User, MessageSquare, Clock, Send, ChevronRight, Shield, Settings } from "lucide-react";
 import { useNativeSocket } from "@/providers/nativeSocketProvider";
+import Link from "next/link";
 
 export default function DashboardPage() {
 	const queryClient = useQueryClient();
-	const {
-		data: conversations,
-		isLoading: isConversationsLoading,
-		isError: isConversationsError,
-		error: conversationsErrorObject,
-	} = useConversations();
+	const { data: conversations, isLoading: isConversationsLoading } = useConversations();
 	const { activeConversationId, setActiveConversationId, draftsByConversation, updateDraft, clearDraft } =
 		useChatStore();
 	const takeover = useTakeoverConversation();
@@ -98,18 +94,6 @@ export default function DashboardPage() {
 				<div className="space-y-2 text-center">
 					<div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-700 border-t-emerald-500 mx-auto" />
 					<p className="text-xs tracking-wider">LOADING SECURE WORKSPACE...</p>
-				</div>
-			</div>
-		);
-	}
-	if (isConversationsError) {
-		return (
-			<div className="flex h-screen w-full items-center justify-center bg-zinc-950 text-zinc-400 font-sans">
-				<div className="space-y-2 text-center">
-					<div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-700 border-t-emerald-500 mx-auto" />
-					<p className="text-lg text-red-600 tracking-wider">
-						ERROR LOADING CONVERSATIONS, RELOAD PAGE...{conversationsErrorObject.message}
-					</p>
 				</div>
 			</div>
 		);
@@ -209,7 +193,11 @@ export default function DashboardPage() {
 							) : messages && messages.length > 0 ? (
 								messages.map((msg) => {
 									const isCustomer = msg.senderType === "customer";
-									const isAI = msg.senderType === "ai";
+									const isAI =
+										msg.senderType === "ai" ||
+										msg.senderType === "agent" ||
+										msg.senderType === "admin" ||
+										msg.senderType === "owner";
 
 									return (
 										<div
@@ -347,6 +335,12 @@ export default function DashboardPage() {
 					</div>
 				</aside>
 			)}
+			<Link href="/dashboard/settings/widget">
+				<button className="inline-flex items-center gap-1.5 text-xs bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 px-3 py-1.5 mt-2 mr-2 rounded-md transition disabled:opacity-50">
+					Settings
+					<Settings className="h-4 w-4" />
+				</button>
+			</Link>
 		</div>
 	);
 }

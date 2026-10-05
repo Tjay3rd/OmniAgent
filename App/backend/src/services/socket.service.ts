@@ -19,6 +19,7 @@ interface ExtendedWebSocket extends WebSocket {
 }
 
 export interface ActualData {
+	lastMessage?: string;
 	conversationId: string;
 	assignedTo: ObjectId | undefined;
 }
@@ -102,11 +103,12 @@ export const initWebSocketServer = (wss: WebSocketServer) => {
 							conversationRooms.set(data.conversationId, new Set());
 						}
 						conversationRooms.get(data.conversationId)!.add(ws);
+
 						break;
 					}
 
 					// Action B: Agent dashboard opens company console feed room
-					case "join_tenant_dashboard":
+					case "join_tenant_dashboard": {
 						if (!verifiedTenantId || !verifiedUserId) {
 							ws.close(1008, "Unauthorized: Missing tenant context");
 							return;
@@ -116,7 +118,28 @@ export const initWebSocketServer = (wss: WebSocketServer) => {
 							tenantDashboardRooms.set(verifiedTenantId, new Set());
 						}
 						tenantDashboardRooms.get(verifiedTenantId)!.add(ws);
+
+						if (data.conversationId) {
+							// Leave the previous conversation room before joining the new one, so this socket only ever sits in one conversationRooms entry at a time.
+
+							if (ws.conversationId && ws.conversationId !== data.conversationId) {
+								const prevRoom = conversationRooms.get(ws.conversationId);
+								prevRoom?.delete(ws);
+								if (prevRoom?.size === 0) {
+									conversationRooms.delete(ws.conversationId);
+								}
+							}
+
+							if (!conversationRooms.has(data.conversationId)) {
+								conversationRooms.set(data.conversationId, new Set());
+							}
+							conversationRooms.get(data.conversationId)!.add(ws);
+							//Persist it on the socket so cleanRooms can find and remove it on close/timeout.
+							ws.conversationId = data.conversationId;
+						}
+
 						break;
+					}
 
 					// Action C: Real-time message exchange engine
 					case "send_message":
@@ -145,18 +168,32 @@ export const initWebSocketServer = (wss: WebSocketServer) => {
 //HELPER FUNCTIONS
 // Helper 1: Database persistent engine & client broadcasting
 const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) => {
+	//Error handling helpers
 	const sendErrorMessage = (
 		ws: ExtendedWebSocket,
 		tempId: string | undefined,
 		conversationId: string | undefined,
 		message: string,
 	) => {
-		ws.send(
-			JSON.stringify({
-				event: "message_error",
-				data: { tempId, conversationId, message },
-			}),
-		);
+		if (ws.readyState === WebSocket.OPEN) {
+			ws.send(
+				JSON.stringify({
+					event: "message_error",
+					data: { tempId, conversationId, message },
+				}),
+			);
+		}
+	};
+
+	const handleError = (ws: ExtendedWebSocket) => {
+		if (ws.readyState === WebSocket.OPEN) {
+			ws.send(
+				JSON.stringify({
+					event: "error_message",
+					data: { message: "An unexpected error occurred while processing your request." },
+				}),
+			);
+		}
 	};
 
 	const parsed = messageSchema.safeParse(data);
@@ -174,11 +211,13 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) =
 
 	if (!tenantId || !senderId) {
 		sendErrorMessage(ws, tempId, conversationId, "Unauthorized or mismatched tenant context");
+		handleError(ws);
 		return;
 	}
 
 	if (!conversationId) {
 		sendErrorMessage(ws, tempId, undefined, "Missing conversation context");
+		handleError(ws);
 		return;
 	}
 
@@ -191,6 +230,7 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) =
 
 	if (!conversation) {
 		sendErrorMessage(ws, tempId, conversationId, "Conversation not found or unauthorized");
+		handleError(ws);
 		return;
 	}
 
@@ -214,6 +254,12 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) =
 	const chatRoom = conversationRooms.get(conversationId);
 	if (chatRoom) {
 		chatRoom.forEach((client) => {
+			console.log(
+				typeof flattenedMessage.conversationId,
+				flattenedMessage.conversationId,
+				typeof conversationId,
+				conversationId,
+			);
 			if (client.readyState === WebSocket.OPEN) {
 				client.send(stringifiedPayload);
 			}

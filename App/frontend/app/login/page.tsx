@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useAuthActions } from "../../hooks/useAuthActions";
+import { Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
 	const { login, isLoggingIn, loginError } = useAuthActions();
@@ -9,6 +10,7 @@ export default function LoginPage() {
 	// We only track the individual form fields locally before submission
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
+	const [showPassword, setShowPassword] = useState(false);
 
 	const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
 		e.preventDefault();
@@ -48,14 +50,23 @@ export default function LoginPage() {
 						<label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1">
 							Security Access Password
 						</label>
-						<input
-							type="password"
-							value={password}
-							onChange={(e) => setPassword(e.target.value)}
-							required
-							className="w-full rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-sm text-white focus:border-blue-500 focus:outline-none transition"
-							placeholder="••••••••"
-						/>
+						<div className="relative flex items-center">
+							<input
+								type={showPassword ? "text" : "password"}
+								value={password}
+								onChange={(e) => setPassword(e.target.value)}
+								required
+								className="w-full rounded-lg border pr-10 border-zinc-800 bg-zinc-950 p-3 text-sm text-white focus:border-blue-500 focus:outline-none transition"
+								placeholder="••••••••"
+							/>
+							<button
+								type="button"
+								className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 transition-colors"
+								onClick={() => setShowPassword((prev) => !prev)}
+							>
+								{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+							</button>
+						</div>
 					</div>
 
 					<button

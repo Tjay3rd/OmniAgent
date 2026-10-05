@@ -23,11 +23,10 @@ const userSchema = new Schema<IUser>(
 );
 
 userSchema.index({ tenantId: 1, email: 1 }, { unique: true });
+userSchema.plugin(loginSecurityPlugin, { maxAttempts: 3 });
 
 const User = model("User", userSchema);
 
 export type UserModel = HydratedDocument<typeof User>;
-
-userSchema.plugin(loginSecurityPlugin, { maxAttempts: 3 });
 
 export default User;

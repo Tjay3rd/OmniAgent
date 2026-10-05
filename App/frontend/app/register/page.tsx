@@ -5,7 +5,7 @@ import { useAuthActions } from "../../hooks/useAuthActions";
 import { api } from "../../lib/api";
 import axios from "axios";
 import Link from "next/link";
-import { Check } from "lucide-react";
+import { Check, Eye, EyeOff } from "lucide-react";
 import { Tier } from "@/types/nextTypes";
 
 const TIERS: {
@@ -43,12 +43,13 @@ const TIERS: {
 ];
 
 export default function RegisterPage() {
-	const { register, isRegistering, registerError } = useAuthActions();
+	const { register, isRegistering, registerError, registerFieldErrors } = useAuthActions();
 
 	const [companyName, setCompanyName] = useState("");
 	const [name, setName] = useState("");
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
+	const [showPassword, setShowPassword] = useState(false);
 	const [subdomain, setSubdomain] = useState("");
 	const [selectedTier, setSelectedTier] = useState<Tier>("free");
 	const [checkoutError, setCheckoutError] = useState<string | null>(null);
@@ -113,7 +114,16 @@ export default function RegisterPage() {
 
 				{(registerError || checkoutError) && (
 					<div className="mb-4 rounded-lg bg-red-950/50 border border-red-900/50 p-3 text-sm text-red-400">
-						{registerError || checkoutError}
+						{registerError}
+						{(registerFieldErrors ? (
+							<ul>
+								{registerFieldErrors.map((err, idx) => (
+									<li key={idx}>
+										{err.field}: {err.message}
+									</li>
+								))}
+							</ul>
+						) : null) || checkoutError}
 					</div>
 				)}
 
@@ -223,14 +233,23 @@ export default function RegisterPage() {
 						<label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1">
 							Master Access Password
 						</label>
-						<input
-							type="password"
-							value={password}
-							onChange={(e) => setPassword(e.target.value)}
-							required
-							className="w-full rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-sm text-white focus:border-blue-500 focus:outline-none transition"
-							placeholder="Minimum 8 characters"
-						/>
+						<div className="relative flex items-center">
+							<input
+								type={showPassword ? "text" : "password"}
+								value={password}
+								onChange={(e) => setPassword(e.target.value)}
+								required
+								className="w-full rounded-lg border pr-10 border-zinc-800 bg-zinc-950 p-3 text-sm text-white focus:border-blue-500 focus:outline-none transition"
+								placeholder="Minimum 8 characters"
+							/>
+							<button
+								type="button"
+								className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 transition-colors"
+								onClick={() => setShowPassword((prev) => !prev)}
+							>
+								{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+							</button>
+						</div>
 					</div>
 
 					<button

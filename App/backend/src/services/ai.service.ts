@@ -1,12 +1,12 @@
 import { streamText } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogle } from "@ai-sdk/google";
 import AgentConfig from "../models/agentConfig.model.js";
 import Message from "../models/chatMessage.model.js";
 import Conversation from "../models/chatConversation.model.js";
 import { WebSocket } from "ws";
 
-const openai = createOpenAI({
-	apiKey: process.env.OPENAI_API_KEY || "",
+const google = createGoogle({
+	apiKey: process.env.GEMINI_API_KEY || "",
 });
 
 interface ITriggerAIPipeline {
@@ -26,8 +26,10 @@ export const generateAgentResponseStream = async ({
 			if (ws.readyState === WebSocket.OPEN) {
 				ws.send(
 					JSON.stringify({
-						event: "error",
-						data: { message: "The live AI assistant for this workspace is currently offline." },
+						event: "error_message",
+						data: {
+							text: "The live AI assistant for this workspace is currently offline. We apologize for any inconvenience!",
+						},
 					}),
 				);
 			}
@@ -43,7 +45,9 @@ export const generateAgentResponseStream = async ({
 		pastMessages.reverse();
 
 		// Explicitly typing the array using the streamText parameters schema
-		const formattedHistory: Parameters<typeof streamText>[0]["messages"] = pastMessages.map((msg) => {
+		type StreamTextMessages = Parameters<typeof streamText>[0]["messages"];
+
+		const formattedHistory: StreamTextMessages = pastMessages.map((msg) => {
 			switch (msg.senderType) {
 				case "customer":
 					return { role: "user", content: msg.text };
@@ -56,8 +60,12 @@ export const generateAgentResponseStream = async ({
 				case "agent":
 					// A human teammate, not the customer and not the AI.
 					// Fold into "user" role but tag it so the model doesn't
-					// mistake it for either the customer or its own prior reply.
-					return { role: "user", content: `[Human agent]: ${msg.text}` };
+					// mistake it for either the customer or its own prior
+					// reply.
+					return {
+						role: "user",
+						content: `[Human agent]: ${msg.text}`,
+					};
 
 				default:
 					// Defensive fallback — better to surface an unexpected
@@ -66,17 +74,28 @@ export const generateAgentResponseStream = async ({
 			}
 		});
 
-		const result = await streamText({
-			model: openai(config.modelName || "gpt-4o-mini"),
-			temperature: config.temperature,
-			system: conversation.wasFirstHandledByHumanAt
-				? `${config.systemPrompt}\n\nNote: This conversation includes messages from a human support agent, prefixed with "[Human agent]:". Do not claim authorship of those messages, and maintain consistency with decisions or commitments the human agent made.`
+		const humanHandoffNote =
+			"\n\nNote: This conversation includes messages from a human " +
+			'support agent, prefixed with "[Human agent]:". Do not claim ' +
+			"authorship of those messages, and maintain consistency with " +
+			"decisions or commitments the human agent made.";
+
+		const result = streamText({
+			model: google(config.modelName || "gemini-3.1-flash-lite"),
+			temperature: config.temperature || 0.3,
+			// v7 renamed the top-level "system" option to "instructions".
+			// ("system" still works as a deprecated fallback, but
+			// "instructions" is the forward-compatible name.)
+			instructions: conversation.wasFirstHandledByHumanAt
+				? `${config.systemPrompt}${humanHandoffNote}`
 				: config.systemPrompt,
 			messages: formattedHistory,
 		});
 
 		let fullAIResponseText = "";
 
+		// textStream is unchanged in v7 (only fullStream -> stream was
+		// renamed, for the raw multi-part event stream).
 		for await (const textChunk of result.textStream) {
 			fullAIResponseText += textChunk;
 
@@ -110,8 +129,10 @@ export const generateAgentResponseStream = async ({
 		if (ws.readyState === WebSocket.OPEN) {
 			ws.send(
 				JSON.stringify({
-					event: "error",
-					data: { message: "The agent encountered an error processing your request." },
+					event: "error_message",
+					data: {
+						message: "The agent encountered an error processing your request.",
+					},
 				}),
 			);
 		}

@@ -8,6 +8,7 @@ import { env } from "../validation/env.zod.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import mongoose from "mongoose";
+import { requireAuth } from "../middleware/auth&auth.mid.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -161,81 +162,98 @@ export const getOrCreateConversation = async (req: Request, res: Response, next:
 export const getConversationMessages = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {
 		const { conversationId } = req.params;
-		const visitorToken = req.headers.authorization?.startsWith("Bearer ")
-			? req.headers.authorization.slice(7).trim()
-			: undefined;
 
-		if (!visitorToken) {
-			return res.status(400).json({ error: "Missing visitor session token." });
+		const allowedDashboardOrigins = new Set(["https://dashboard.example.com", "http://localhost:3000"]);
+		const isDashboardRequest: boolean = allowedDashboardOrigins.has(req.headers.origin ?? "");
+
+		if (isDashboardRequest) {
+			return await getDashboardMessages(req, res, next);
 		}
+		return await getVisitorMessages(req, res, next);
 
-		let decoded: { customerId: string; tenantId: string };
-		try {
-			decoded = jwt.verify(visitorToken, env.WIDGET_JWT_SECRET!) as typeof decoded;
-		} catch {
-			return res.status(401).json({ error: "Invalid or expired session." });
+		// Helper functions for messages retrieval
+		async function getDashboardMessages(req: Request, res: Response, next: NextFunction) {
+			try {
+				//Authenticate dashboard user first
+				const token = req.cookies.accessToken;
+				if (!token) {
+					return res.status(401).json({ error: "Access token missing" });
+				}
+				const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as any;
+				req.user = {
+					id: decoded.id,
+					tenantId: decoded.tenantId,
+					role: decoded.role,
+				};
+				if (!req.user) return res.status(401).json({ error: "Session probably expired" });
+
+				//ownership check
+				const conversation = await Conversation.findOne({
+					_id: conversationId,
+					tenantId: req.user?.tenantId,
+				}).lean();
+
+				if (!conversation) {
+					return res.status(404).json({ error: "Conversation not found or access denied." });
+				}
+
+				const messages = await fetchMessagesFromDatabase(req, conversationId);
+
+				return res.status(200).json({ count: messages?.length, messages });
+			} catch (error) {
+				next(error);
+			}
 		}
+		async function getVisitorMessages(req: Request, res: Response, next: NextFunction) {
+			try {
+				const visitorToken = req.headers.authorization?.startsWith("Bearer ")
+					? req.headers.authorization.slice(7).trim()
+					: undefined;
 
-		// Ownership check
-		const conversation = await Conversation.findOne({
-			_id: conversationId,
-			tenantId: decoded.tenantId,
-			customerId: decoded.customerId,
-		}).lean();
+				if (!visitorToken) {
+					return res.status(400).json({ error: "Missing visitor session token." });
+				}
 
-		if (!conversation) {
-			return res.status(404).json({ error: "Conversation not found or access denied." });
+				let decoded: { customerId: string; tenantId: string };
+				try {
+					decoded = jwt.verify(visitorToken, env.WIDGET_JWT_SECRET!) as typeof decoded;
+				} catch {
+					return res.status(401).json({ error: "Invalid or expired session." });
+				}
+
+				const conversation = await Conversation.findOne({
+					_id: conversationId,
+					tenantId: decoded.tenantId,
+					customerId: decoded.customerId,
+				}).lean();
+
+				if (!conversation) {
+					return res.status(404).json({ error: "Conversation not found or access denied." });
+				}
+
+				const messages = await fetchMessagesFromDatabase(req, conversationId);
+
+				return res.status(200).json({ count: messages?.length, messages });
+			} catch (error) {
+				next(error);
+			}
 		}
+		async function fetchMessagesFromDatabase(req: Request, conversationId: string | string[]) {
+			const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 100);
+			const beforeTimestampParsed = req.query.before ? new Date(req.query.before as string) : null;
+			const beforeTimestamp =
+				beforeTimestampParsed && !isNaN(beforeTimestampParsed.getTime()) ? beforeTimestampParsed : null;
 
-		const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 100);
-		const beforeTimestampParsed = req.query.before ? new Date(req.query.before as string) : null;
-		const beforeTimestamp =
-			beforeTimestampParsed && !isNaN(beforeTimestampParsed.getTime()) ? beforeTimestampParsed : null;
+			const query: any = { conversationId };
+			if (beforeTimestamp) {
+				query.createdAt = { $lt: beforeTimestamp };
+			}
 
-		const query: any = { conversationId };
-		if (beforeTimestamp) {
-			query.createdAt = { $lt: beforeTimestamp };
+			const messages = await Message.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+
+			messages.reverse();
+			return messages;
 		}
-
-		const messages = await Message.find(query).sort({ createdAt: -1 }).limit(limit).lean();
-
-		messages.reverse();
-
-		return res.status(200).json({ count: messages.length, messages });
-	} catch (error) {
-		next(error);
-	}
-};
-
-export const humanTakeoverHandler = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
-	try {
-		const { conversationId } = req.params;
-
-		// req.user is populated by your requireAuth middleware
-		if (!req.user) {
-			return res.status(401).json({ error: "Unauthenticated" });
-		}
-
-		// Atomically shift control away from the AI to this specific human agent
-		const conversation = await Conversation.findOneAndUpdate(
-			{ _id: conversationId, tenantId: req.user.tenantId },
-			{
-				$set: {
-					aiHandled: false, // Turn off the AI engine for this chat
-					assignedTo: req.user.id, // Lock it to this human agent
-				},
-			},
-			{ new: true }, // Return the updated document
-		);
-
-		if (!conversation) {
-			return res.status(404).json({ error: "Conversation not found in your workspace." });
-		}
-
-		return res.status(200).json({
-			message: "AI muted. You have successfully taken control of this conversation.",
-			conversation,
-		});
 	} catch (error) {
 		next(error);
 	}
@@ -243,6 +261,7 @@ export const humanTakeoverHandler = async (req: Request, res: Response, next: Ne
 
 export const widgetScript = async (req: Request, res: Response) => {
 	try {
+		res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
 		res.setHeader("Access-Control-Allow-Origin", "*");
 		res.sendFile(path.join(__dirname, "../public/widget.js"), (error) => {
 			if (error) {

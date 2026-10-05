@@ -1,26 +1,29 @@
 {
-	"name": "omniagent",
+	"name": "omniagent-root",
 	"version": "1.0.0",
 	"description": "",
 	"main": "index.js",
 	"workspaces": [
-		"frontend",
-		"backend"
+		"App/*",
+		"packages/*"
 	],
 	"scripts": {
-		"dev:backend": "npm run dev --workspace=backend",
-		"dev:frontend": "npm run dev --workspace=frontend",
-		"dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\""
+		"predev": "npm run build -w omni-shared",
+		"dev:shared": "npm run dev -w omni-shared",
+		"dev:backend": "npm run dev -w omniagent-backend",
+		"dev:frontend": "npm run dev -w omniagent-frontend",
+		"dev": "concurrently -n shared,api,web npm:dev:*",
+		"build:shared": "npm run build -w omni-shared",
+		"build:backend": "npm run build -w omniagent-backend",
+		"build:frontend": "npm run build -w omniagent-frontend",
+		"build": "npm run build:shared && npm run build:omniagent-backend && npm run build:omniagent-frontend",
+		"start": "npm run start -w omniagent-backend"
 	},
 	"keywords": [],
 	"author": "",
 	"license": "ISC",
-	"type": "commonjs",
+	"type": "module",
 	"devDependencies": {
 		"concurrently": "^9.2.1"
-	},
-	"dependencies": {
-		"@tanstack/react-query": "^5.90.21",
-		"@tanstack/react-query-devtools": "^5.91.3"
 	}
 }

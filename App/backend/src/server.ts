@@ -28,7 +28,7 @@ initWebSocketServer(wss);
 
 httpServer.on("upgrade", (request: IncomingMessage, socket, head) => {
 	try {
-		const { pathname } = new URL(request.url ?? "/", "http://localhost");
+		const { pathname } = new URL(request.url ?? "/", "ws://localhost:5000");
 
 		if (pathname === "/dashboard") {
 			return handleDashboardUpgrade(request, socket, head);
@@ -83,7 +83,6 @@ const handleDashboardUpgrade = (request: IncomingMessage, socket: any, head: any
 		// Attach the verified payload to the WebSocket instance
 		(ws as any).agentId = payload?.id;
 		(ws as any).tenantId = payload?.tenantId;
-		(ws as any).connectionType = payload?.role; // "owner" | "admin" | "agent"
 		(ws as any).senderType = payload?.role;
 
 		wss.emit("connection", ws, request);
@@ -91,15 +90,41 @@ const handleDashboardUpgrade = (request: IncomingMessage, socket: any, head: any
 };
 
 // 2. standard security headers (CSP, HSTS, X-Content-Type-Options, etc.).
-app.use(helmet());
-
-// 3. Standard Cross-Origin Resource Sharing Rules
 app.use(
-	cors({
-		origin: env.FRONTEND_URL,
-		credentials: true,
+	helmet({
+		crossOriginResourcePolicy: { policy: "cross-origin" },
+		frameguard: false,
+		contentSecurityPolicy: {
+			directives: {
+				...helmet.contentSecurityPolicy.getDefaultDirectives(),
+				// Allow WebSockets
+				"connect-src": ["'self'", "ws:", "wss:", env.FRONTEND_URL],
+				// Allow loading scripts from self and external contexts
+				"script-src": ["'self'", "'unsafe-inline'"],
+			},
+		},
 	}),
 );
+
+// 3. Standard Cross-Origin Resource Sharing Rules
+const dashboardCors = cors({
+	origin: env.FRONTEND_URL,
+	credentials: true,
+});
+
+// const widgetPublicCors = cors({
+// 	origin: "*",
+// 	credentials: false, // no cookies involved, "*" is safe here
+// });
+
+const widgetCors = cors({
+	origin: (origin, callback) => {
+		// reflect whatever origin is asking, since embedders are unknown upfront
+		if (!origin) return callback(null, true);
+		return callback(null, origin);
+	},
+	credentials: true,
+});
 
 // 4. MOUNT STRIPE WEBHOOK ROUTE FIRST.
 // This ensures raw stream buffers are captured before global body-parsers parse the text stream
@@ -110,10 +135,10 @@ app.use(express.json());
 app.use(cookieParser());
 
 // 6. System Route Matrix Registrations
-app.use("/api/admin", adminRouter);
-app.use("/api/dashboard", dashboardRouter);
-app.use("/api/widget", widgetRouter);
-app.use("/api/billing", billingRouter);
+app.use("/api/admin", dashboardCors, adminRouter);
+app.use("/api/dashboard", dashboardCors, dashboardRouter);
+app.use("/api/widget", widgetCors, widgetRouter);
+app.use("/api/billing", dashboardCors, billingRouter);
 
 // 7. Centralized Production Error Capture Handler
 

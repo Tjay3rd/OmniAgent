@@ -21,7 +21,7 @@ export const registrationSchema = z.object({
 			message: "Subdomain can only contain lowercase letters, numbers, and hyphens",
 		})
 		// 3. Prevent leading or trailing hyphens
-		.refine((val) => !val.startsWith("-") && !val.endsWith("-"), {
+		.refine((val) => !val.startsWith("-") || !val.endsWith("-"), {
 			message: "Subdomain cannot start or end with a hyphen",
 		}),
 	password: z
@@ -30,7 +30,7 @@ export const registrationSchema = z.object({
 		.max(72, "Password max 72 chars (bcrypt limit)")
 		.regex(/[A-Z]/, "Must contain uppercase letter")
 		.regex(/[0-9]/, "Must contain a number")
-		.regex(/[!@#$%]/, "Must contain a special character"),
+		.regex(/[!@#$%^&*]/, "Must contain a special character"),
 });
 
 export const loginSchema = z.object({

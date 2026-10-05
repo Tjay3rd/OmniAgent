@@ -54,16 +54,18 @@
     #wgt-messages{flex:1;overflow-y:auto;padding:12px;font-size:13px;
       background:#f9fafb;}
     .wgt-msg{margin-bottom:8px;max-width:80%;padding:8px 10px;border-radius:8px;
-      line-height:1.4;word-wrap:break-word;}
+      line-height:1.4;word-wrap:break-word;background:#e5e7eb;color:#111827;}
     .wgt-msg.customer{background:#111827;color:#fff;margin-left:auto;}
     .wgt-msg.agent,.wgt-msg.ai,.wgt-msg.admin,.wgt-msg.owner{background:#e5e7eb;color:#111827;margin-right:auto;}
     #wgt-identify{padding:8px 12px;border-top:1px solid #eee;font-size:12px;
       display:flex;gap:6px;}
-    #wgt-identify input{flex:1;font-size:12px;padding:6px;border:1px solid #ddd;
+    #wgt-identify input{flex:1;font-size:12px;padding:6px;border:1px solid #ddd;color:#000;
       border-radius:6px;}
+	  #wgt-identify input::placeholder{ color:#999;opacity:1;}
     #wgt-inputRow{display:flex;border-top:1px solid #eee;padding:8px;gap:6px;}
-    #wgt-input{flex:1;border:1px solid #ddd;border-radius:8px;padding:8px;
+    #wgt-input{flex:1;border:1px solid #ddd;border-radius:8px;padding:8px;color:#000;
       font-size:13px;resize:none;}
+	  #wgt-input::placeholder{ color:#999;opacity:1;}
     #wgt-send{background:#111827;color:#fff;border:none;border-radius:8px;
       padding:0 14px;cursor:pointer;font-size:13px;}
 	#wgt-sendd{background:#111827;color:#fff;border:none;border-radius:8px;
@@ -96,7 +98,7 @@
 			class: `wgt-msg ${msg.senderType}`,
 			text: msg.text,
 		});
-		bubbleEl.dataset.messageId = msg._id;
+		bubbleEl.dataset.messageId = msg._id || msg.tempId;
 		messagesEl.appendChild(bubbleEl);
 		messagesEl.scrollTop = messagesEl.scrollHeight;
 	}
@@ -165,7 +167,7 @@
 	function connectSocket() {
 		if (state.socket && state.socket.readyState === WebSocket.OPEN) return;
 
-		const ws = new WebSocket(WS_URL);
+		const ws = new WebSocket(`${WS_URL}/widget`);
 		state.socket = ws;
 
 		ws.onopen = () => {
@@ -193,7 +195,7 @@
 				return;
 			}
 
-			if (payload.event === "new_message") {
+			if (payload.event === "new_message" || payload.event === "error_message") {
 				//prevent displaying same message bubble twice on message sent confirmation(tempId echo)
 				const idx = messagesHistory.findIndex((m) => m._id === payload.data.tempId);
 				if (idx !== -1) {
@@ -228,6 +230,7 @@
 		const newMessage = {
 			event: "send_message",
 			data: {
+				_id: tempId,
 				tempId,
 				tenantId,
 				conversationId: state.conversationId,
@@ -236,8 +239,7 @@
 			},
 		};
 
-		const optimistic = { ...newMessage.data, _id: tempId };
-		messagesHistory.push(optimistic);
+		messagesHistory.push(newMessage.data);
 
 		renderMessage(newMessage.data);
 

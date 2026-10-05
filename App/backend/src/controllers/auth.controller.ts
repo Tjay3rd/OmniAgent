@@ -53,7 +53,8 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 			[
 				{
 					tenantId: tenant._id,
-					name,
+					username: name,
+					subdomain,
 					email,
 					role: "owner",
 					passwordHash,
@@ -79,6 +80,7 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 			tenant,
 		});
 	} catch (error) {
+		console.log("transaction error", error);
 		await session.abortTransaction();
 		session.endSession();
 		next(error);

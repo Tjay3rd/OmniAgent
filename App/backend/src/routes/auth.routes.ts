@@ -1,5 +1,4 @@
 import { Router } from "express";
-import { Response, Request, NextFunction } from "express";
 import { loginHandler, tenantRegistrationHandler } from "../controllers/auth.controller.js";
 import Customer from "../models/customer.model.js";
 import Tenant from "../models/tenant.model.js";

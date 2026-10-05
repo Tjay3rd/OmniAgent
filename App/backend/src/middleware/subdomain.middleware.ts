@@ -15,9 +15,24 @@ export const extractSubdomain = async (req: Request, res: Response, next: NextFu
 
 	// Split by dots to isolate the parts
 	const parts = hostname.split(".");
+	const RESERVED_SUBDOMAINS = [
+		"www",
+		"app",
+		"api",
+		"admin",
+		"dashboard",
+		"auth",
+		"login",
+		"signup",
+		"mail",
+		"status",
+		"docs",
+		"billing",
+		"localhost",
+	];
 
 	// Ignore standard paths like 'www' or local setups
-	if (parts.length < 3 || parts[0] === "www" || parts[0] === "localhost") {
+	if (parts.length < 3 || RESERVED_SUBDOMAINS.includes(parts[0])) {
 		return next(); // Carry on to marketing pages / main platform auth
 	}
 

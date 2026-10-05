@@ -40,6 +40,11 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 		shouldReconnect.current = true;
 
 		function connect() {
+			// Prevent opening duplicate sockets if one is already open or connecting
+			if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) {
+				return;
+			}
+
 			const base =
 				process.env.NEXT_PUBLIC_WS_URL ||
 				(typeof window !== "undefined" && window.location.protocol === "https:"
@@ -70,7 +75,12 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 				try {
 					const payload = JSON.parse(event.data);
 
+					if (payload.event === "new_message") {
+						console.log("[client] typeof:", typeof payload.data.conversationId, "value:", payload.data.conversationId);
+					}
+
 					switch (payload.event) {
+						case "error_message":
 						case "new_message": {
 							const newMessage: MessageDoc = payload.data;
 							queryClient.setQueryData<MessageDoc[]>(["messages", newMessage.conversationId], (old) => {
@@ -142,7 +152,10 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 
 						case "message_error": {
 							const { tempId, conversationId } = payload.data;
-							if (!tempId || !conversationId) break;
+							if (!tempId || !conversationId) {
+								console.warn("tempId or conversationId missing in message_error event:", payload.data);
+								break;
+							}
 
 							queryClient.setQueryData<MessageDoc[]>(["messages", conversationId], (old) =>
 								old?.map((m) => (m._id === tempId ? { ...m, status: "failed" } : m)),

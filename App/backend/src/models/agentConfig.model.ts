@@ -27,19 +27,19 @@ const agentConfigSchema = new Schema<IAgentConfig>(
 		temperature: {
 			type: Number,
 			required: true,
-			default: 0.3, // Low temperature by default for predictable support answers
+			default: 1.0, // middle ground temperature by default
 			min: 0.0,
-			max: 1.0,
+			max: 2.0,
 		},
 		modelProvider: {
 			type: String,
 			required: true,
-			default: "openai",
+			default: "google",
 		},
 		modelName: {
 			type: String,
 			required: true,
-			default: "gpt-4o-mini",
+			default: "gemini-3.1-flash-lite",
 		},
 		isActive: {
 			type: Boolean,

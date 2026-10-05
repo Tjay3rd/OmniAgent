@@ -10,8 +10,8 @@ interface ICustomer {
 const customerSchema = new Schema<ICustomer>(
 	{
 		tenantId: { type: Schema.Types.ObjectId, ref: "Tenant", required: true },
-		email: { type: String, required: true, lowercase: true, trim: true },
-		username: { type: String, required: true, unique: true, trim: true },
+		email: { type: String, lowercase: true, trim: true },
+		username: { type: String, unique: true, trim: true },
 		externalId: { type: String, trim: true },
 	},
 	{ timestamps: true },

@@ -15,7 +15,7 @@ export const validate = (schema: any) => (req: Request, res: Response, next: Nex
 			field: i.path.join("."),
 			message: i.message,
 		}));
-		return res.status(422).json({ error: "Validation errors", errors });
+		return res.status(422).json({ error: "VALIDATION ERROR(S): ", errors });
 	}
 
 	req.body = result.data;

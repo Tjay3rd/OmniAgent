@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../../lib/api";
 import axios from "axios";
+import { AgentConfigForm } from "./AgentConfigFormComponent";
 
 export default function WidgetSettingsPage() {
 	const [tenantId, setTenantId] = useState<string | null>(null);
@@ -39,14 +40,22 @@ export default function WidgetSettingsPage() {
 		}
 	};
 
+	const defaultValues = {
+		modelName: "gemini-3.1-flash-lite",
+		temperature: 0.3,
+		systemPrompt: "You are a customer support agent",
+		isActive: true,
+	} as const;
+
 	return (
 		<div className="space-y-2">
-			<p className="text-sm text-zinc-400">
+			{/*1.WIDGET TENANT ID*/}
+			<p className="text-sm text-zinc-700">
 				Paste the snippet into your website, right before the closing &lt;/body&gt; tag.
 			</p>
 			{tenantId ? (
 				<>
-					<pre className="bg-zinc-900 p-3 rounded-lg text-xs overflow-x-auto">{embedCode}</pre>
+					<pre className="bg-zinc-400 p-3 rounded-lg text-xs overflow-x-auto">{embedCode}</pre>
 					<button onClick={handleCopy} disabled={!tenantId}>
 						{copied ? "Copied!" : "Copy code"}
 					</button>
@@ -55,6 +64,10 @@ export default function WidgetSettingsPage() {
 				<p className="text-sm text-zinc-500">Loading your workspace…</p>
 			)}
 			{error && <p className="text-red-500 text-sm">{error}</p>}
+
+			{/*AI CONFIG SETTINGS INPUT */}
+
+			{tenantId && <AgentConfigForm tenantId={tenantId} defaultValues={defaultValues} />}
 		</div>
 	);
 }
