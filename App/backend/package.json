@@ -4,7 +4,7 @@
 	"main": "src/server.ts",
 	"type": "module",
 	"scripts": {
-		"copy-assets": "mkdir -p dist/public && cp src/public/widget.js dist/public/widget.js",
+		"copy-assets": "mkdir -p dist/public && cp src/public/widget.js dist/public/widget.js/",
 		"build": "tsc && npm run copy-assets",
 		"start": "node dist/server.js",
 		"dev": "tsx watch --include \"../../packages/shared/dist/**\" src/server.ts"
