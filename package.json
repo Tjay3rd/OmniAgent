@@ -17,7 +17,7 @@
 		"build:shared": "npm run build -w omni-shared",
 		"build:backend": "npm run build -w omniagent-backend",
 		"build:frontend": "npm run build -w omniagent-frontend",
-		"build": "npm run build:shared && npm run build:omniagent-backend && npm run build:omniagent-frontend",
+		"build": "npm run build:shared && npm run build:backend && npm run build:frontend",
 		"start": "npm run start -w omniagent-backend"
 	},
 	"keywords": [],
