@@ -114,9 +114,14 @@ export function AgentConfigForm({ tenantId, defaultValues, onSaved }: AgentConfi
 									<SelectValue placeholder="Select a model" />
 								</SelectTrigger>
 								<SelectContent>
+									<SelectItem value="gemini-2.5-flash">Gemini 2.5 Flash (fastest, cheapest)</SelectItem>
+									<SelectItem value="gemini-2.5-flash-lite">Gemini 2.5 Flash lite (fast and efficient)</SelectItem>
 									<SelectItem value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (fastest, cheapest)</SelectItem>
-									<SelectItem value="gemini-3-flash">Gemini 3 Flash (balanced)</SelectItem>
-									<SelectItem value="gemini-3-pro">Gemini 3 Pro (highest quality)</SelectItem>
+									<SelectItem value="gemini-3.5-flash">Gemini 3.5 Flash (balanced)</SelectItem>
+									<SelectItem value="gemini-3.5-flash-lite">Gemini 3.5 Flash lite (balanced)</SelectItem>
+									<SelectItem value="gemini-3.6-flash">Gemini 3.6 Flash (higher quality)</SelectItem>
+									<SelectItem value="gemini-3.7-flash">Gemini 3.7 Flash (highest quality)</SelectItem>
+									<SelectItem value="gemini-3.8-flash">Gemini 3.8 Flash (highest quality)</SelectItem>
 								</SelectContent>
 							</Select>
 							<FieldError errors={fieldState.error ? [fieldState.error] : undefined} />

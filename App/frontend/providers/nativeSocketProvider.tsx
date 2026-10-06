@@ -75,10 +75,6 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 				try {
 					const payload = JSON.parse(event.data);
 
-					if (payload.event === "new_message") {
-						console.log("[client] typeof:", typeof payload.data.conversationId, "value:", payload.data.conversationId);
-					}
-
 					switch (payload.event) {
 						case "error_message":
 						case "new_message": {

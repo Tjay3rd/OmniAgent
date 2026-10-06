@@ -83,9 +83,6 @@ export const generateAgentResponseStream = async ({
 		const result = streamText({
 			model: google(config.modelName || "gemini-3.1-flash-lite"),
 			temperature: config.temperature || 0.3,
-			// v7 renamed the top-level "system" option to "instructions".
-			// ("system" still works as a deprecated fallback, but
-			// "instructions" is the forward-compatible name.)
 			instructions: conversation.wasFirstHandledByHumanAt
 				? `${config.systemPrompt}${humanHandoffNote}`
 				: config.systemPrompt,
@@ -94,16 +91,28 @@ export const generateAgentResponseStream = async ({
 
 		let fullAIResponseText = "";
 
-		// textStream is unchanged in v7 (only fullStream -> stream was
-		// renamed, for the raw multi-part event stream).
-		for await (const textChunk of result.textStream) {
-			fullAIResponseText += textChunk;
+		// textStream is unchanged in v7 (only fullStream -> stream was renamed, for the raw multi-part event stream).
+		try {
+			for await (const textChunk of result.textStream) {
+				fullAIResponseText += textChunk;
 
+				if (ws.readyState === WebSocket.OPEN) {
+					ws.send(
+						JSON.stringify({
+							event: "ai_token",
+							data: { conversationId, token: textChunk },
+						}),
+					);
+				}
+			}
+		} catch (error) {
 			if (ws.readyState === WebSocket.OPEN) {
 				ws.send(
 					JSON.stringify({
-						event: "ai_token",
-						data: { conversationId, token: textChunk },
+						event: "ai_stream_error",
+						data: {
+							message: "The agent encountered an error while streaming the response.",
+						},
 					}),
 				);
 			}

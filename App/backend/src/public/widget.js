@@ -163,6 +163,36 @@
 		identifyRow.style.display = "none";
 	}
 
+	// ---- Streaming ---------------------------------------------
+	let streamingNode = null;
+
+	function appendToken(token) {
+		// First token of a reply: create the bubble
+		if (!streamingNode) {
+			streamingNode = el("div", {
+				class: "wgt-msg ai",
+				text: "",
+			});
+			messagesEl.appendChild(streamingNode);
+		}
+		// textContent (not innerHTML) keeps this XSS-safe
+		streamingNode.textContent += token;
+		messagesEl.scrollTop = messagesEl.scrollHeight;
+	}
+
+	function finalizeStream(message) {
+		if (streamingNode) {
+			// Swap in the authoritative saved text and id
+			streamingNode.textContent = message.text;
+			streamingNode.dataset.messageId = message._id;
+			streamingNode = null;
+		} else {
+			// No tokens were seen (e.g. socket joined late)
+			renderMessage(message);
+		}
+		messagesHistory.push(message);
+	}
+
 	// ---- Socket -----------------------------------------------------
 	function connectSocket() {
 		if (state.socket && state.socket.readyState === WebSocket.OPEN) return;
@@ -192,6 +222,23 @@
 
 			if (payload.error) {
 				console.warn("[Widget]", payload.error);
+				return;
+			}
+
+			if (payload.event === "ai_stream_error") {
+				streamingNode = null;
+			}
+
+			if (payload.event === "ai_token") {
+				if (payload.data.conversationId !== state.conversationId) {
+					return;
+				}
+				appendToken(payload.data.token);
+				return;
+			}
+
+			if (payload.event === "ai_stream_complete") {
+				finalizeStream(payload.data);
 				return;
 			}
 

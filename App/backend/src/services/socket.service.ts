@@ -254,12 +254,6 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) =
 	const chatRoom = conversationRooms.get(conversationId);
 	if (chatRoom) {
 		chatRoom.forEach((client) => {
-			console.log(
-				typeof flattenedMessage.conversationId,
-				flattenedMessage.conversationId,
-				typeof conversationId,
-				conversationId,
-			);
 			if (client.readyState === WebSocket.OPEN) {
 				client.send(stringifiedPayload);
 			}

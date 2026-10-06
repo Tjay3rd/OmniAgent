@@ -4,7 +4,8 @@
 	"description": "",
 	"main": "index.js",
 	"workspaces": [
-		"App/*",
+		"App/backend*",
+		"App/frontend*",
 		"packages/*"
 	],
 	"scripts": {

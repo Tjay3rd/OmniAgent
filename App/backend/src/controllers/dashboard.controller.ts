@@ -168,7 +168,7 @@ export async function agentConfigTweak(req: Request, res: Response, next: NextFu
 			return res.status(404).json({ error: "Agent config not found" });
 		}
 
-		return res.status(20).json(toDto(updated));
+		return res.status(200).json(toDto(updated));
 	} catch (err) {
 		next(err);
 	}
