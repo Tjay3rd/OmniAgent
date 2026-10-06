@@ -48,7 +48,7 @@ export function NativeSocketProvider({ children }: NativeSocketProviderProps) {
 			const base =
 				process.env.NEXT_PUBLIC_WS_URL ||
 				(typeof window !== "undefined" && window.location.protocol === "https:"
-					? "wss://actualSite.com" //actual production websocketURL
+					? `wss://omniagentdeck.top` //actual production websocketURL
 					: "ws://localhost:5000"); //development fallback
 
 			const wsUrl = `${base}/dashboard`;
