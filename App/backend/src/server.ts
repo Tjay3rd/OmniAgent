@@ -21,6 +21,7 @@ import jwt from "jsonwebtoken";
 const app = express();
 const httpServer = createServer(app);
 app.set("trust proxy", 1);
+app.get("/health", (_req, res) => res.sendStatus(200));
 
 // 1. Initialize the WebSocket layer over the shared HTTP infrastructure
 const wss = new WebSocketServer({ noServer: true });
@@ -112,14 +113,9 @@ const dashboardCors = cors({
 	credentials: true,
 });
 
-// const widgetPublicCors = cors({
-// 	origin: "*",
-// 	credentials: false, // no cookies involved, "*" is safe here
-// });
-
 const widgetCors = cors({
 	origin: (origin, callback) => {
-		// reflect whatever origin is asking, since embedders are unknown upfront
+		// reflecting whatever origin is asking, since embedders are unknown upfront
 		if (!origin) return callback(null, true);
 		return callback(null, origin);
 	},
@@ -127,7 +123,7 @@ const widgetCors = cors({
 });
 
 // 4. MOUNT STRIPE WEBHOOK ROUTE FIRST.
-// This ensures raw stream buffers are captured before global body-parsers parse the text stream
+// ensuring raw stream buffers are captured before global body-parsers parse the text stream
 app.use("/api/webhooks", express.raw({ type: "application/json" }), webhookRouter);
 
 // 5. Global Request Utility Parsers

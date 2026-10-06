@@ -19,7 +19,8 @@ export const hashToken = (token: string) => crypto.createHash("sha256").update(t
 export const baseOptions: CookieOptions = {
 	httpOnly: true,
 	secure: env.NODE_ENV === "production",
-	sameSite: env.NODE_ENV === "production" ? "none" : "lax",
+	sameSite: env.NODE_ENV === "production" ? "lax" : "none",
+	//domain: ".omniagentdeck.top"
 };
 
 export const setTokenCookies = async (res: Response, accessToken: string, refreshToken: string) => {

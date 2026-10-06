@@ -88,8 +88,7 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 	}
 };
 
-export const loginHandler =
-	(Model: any) =>
+export const loginHandler =	(Model: any) => {
 	async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 		try {
 			const { email, password } = req.body;
@@ -131,6 +130,7 @@ export const loginHandler =
 			return;
 		}
 	};
+};
 
 export const handleTokenRefresh = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {
