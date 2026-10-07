@@ -7,7 +7,7 @@ interface FailedRequest {
 }
 
 export const api = axios.create({
-	baseURL: /*process.env.NEXT_PUBLIC_API_URL ||*/ "http://localhost:5000",
+	baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000",
 	timeout: 10000, // 10 seconds
 	withCredentials: true, // Crucial for sending and receiving httpOnly cookies
 	headers: {
