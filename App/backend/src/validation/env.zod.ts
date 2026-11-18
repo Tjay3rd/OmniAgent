@@ -20,6 +20,11 @@ const envSchema = z.object({
 	FRONTEND_URL: z.url(),
 	STRIPE_PRICE_STARTER: z.string().min(29, "Price Id is must be a 30 character string "),
 	STRIPE_PRICE_PRODUCTION: z.string().min(29, "Price Id must be a 30 character string"),
+	RESEND_API_KEY: z.string().min(10, "Resend API Key must be at least 10 characters long"),
+	EMAIL_FROM: z.string().min(5, "Email From must be at least 5 characters long"),
+	GEMINI_STREAMING_API_KEY: z.string().min(10, "Gemini Streaming API Key must be at least 10 characters long"),
+	GEMINI_EMBEDDING_API_KEY: z.string().min(10, "Gemini Embedding API Key must be at least 10 characters long"),
+	REDIS_URL: z.string(),
 });
 // Validate process.env against the schema
 const parsedEnv = envSchema.safeParse(process.env);

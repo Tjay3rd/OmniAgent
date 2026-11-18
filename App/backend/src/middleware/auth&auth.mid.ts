@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../validation/env.zod.js";
+import { verifiedLimiter } from "./rateLimit.js";
 
 //Authentication middleware to verify JWT tokens and attach user info to the request object
 export const requireAuth = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
@@ -18,7 +19,10 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 			id: decoded.id,
 			tenantId: decoded.tenantId,
 			role: decoded.role,
+			plan: decoded.plan,
 		};
+
+		verifiedLimiter(req, res, next); // Apply rate limiting for authenticated users
 
 		next();
 	} catch (error) {

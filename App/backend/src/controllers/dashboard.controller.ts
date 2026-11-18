@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import Conversation from "../models/chatConversation.model.js";
 import Message from "../models/chatMessage.model.js";
+import KnowledgeSource from "../models/knowledgeSource.model.js";
 import { broadcastToDashboardRoom, ActualData } from "../services/socket.service.js";
 import AgentConfig from "../models/agentConfig.model.js";
 import { agentConfigSchema, agentConfigPatchSchema } from "omni-shared";
@@ -173,3 +174,23 @@ export async function agentConfigTweak(req: Request, res: Response, next: NextFu
 		next(err);
 	}
 }
+
+export const getSourceStatus = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+	try {
+		const source = await KnowledgeSource.findOne({
+			_id: req.params.id,
+			tenantId: req.user?.tenantId,
+		}).lean();
+
+		if (!source) {
+			return res.status(404).json({ error: "Not found" });
+		}
+		return res.json({
+			status: source.status,
+			chunkCount: source.chunkCount,
+			error: source.error,
+		});
+	} catch (error) {
+		next(error);
+	}
+};

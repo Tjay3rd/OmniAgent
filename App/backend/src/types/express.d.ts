@@ -5,6 +5,7 @@ declare global {
 				id: string;
 				tenantId: string;
 				role: "owner" | "admin" | "agent";
+				plan: "free" | "starter" | "production";
 			};
 		}
 	}

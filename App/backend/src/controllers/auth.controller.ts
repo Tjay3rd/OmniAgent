@@ -15,6 +15,7 @@ import {
 import { Request, Response, NextFunction } from "express";
 import User from "../models/user.model.js";
 import Tenant from "../models/tenant.model.js";
+import { sendWelcomeEmail } from "../lib/emails.js";
 
 export const tenantRegistrationHandler = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	const session = await mongoose.startSession();
@@ -69,7 +70,10 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 			id: user._id.toString(),
 			tenantId: tenant._id.toString(),
 			role: user.role,
+			plan: tenant.plan,
 		});
+
+		await sendWelcomeEmail(email, name);
 
 		const userResponse = user.toObject();
 		delete userResponse.passwordHash;
@@ -88,7 +92,8 @@ export const tenantRegistrationHandler = async (req: Request, res: Response, nex
 	}
 };
 
-export const loginHandler =	(Model: any) => 
+export const loginHandler =
+	(Model: any) =>
 	async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 		try {
 			const { email, password } = req.body;
@@ -115,10 +120,13 @@ export const loginHandler =	(Model: any) =>
 
 			await user.resetLoginAttempts();
 
+			const plan = await Tenant.findById(user.tenantId).select("plan");
+
 			await signTokenAndSetCookies(res, {
 				id: user._id.toString(),
 				tenantId: user.tenantId.toString(),
 				role: user.role,
+				plan: plan?.plan!,
 			});
 
 			const userResponse = user.toObject();
@@ -130,7 +138,6 @@ export const loginHandler =	(Model: any) =>
 			return;
 		}
 	};
-
 
 export const handleTokenRefresh = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
 	try {

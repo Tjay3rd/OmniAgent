@@ -8,7 +8,6 @@ import { env } from "../validation/env.zod.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import mongoose from "mongoose";
-import { requireAuth } from "../middleware/auth&auth.mid.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,7 +48,7 @@ export const initializeWidgetCustomer = async (req: Request, res: Response, next
 						return res.status(200).json({
 							message: "Welcome back",
 							token: refreshedToken,
-							customer: existingCustomer,
+							customer: existingCustomer.toJSON(),
 						});
 					}
 				}
@@ -61,7 +60,7 @@ export const initializeWidgetCustomer = async (req: Request, res: Response, next
 		// New visitor (or the old token is expired or no longer resolves to anything)
 		const newCustomer = await Customer.create({
 			tenantId,
-			name: "Anonymous Guest",
+			username: "Anonymous Guest",
 		});
 
 		const token = jwt.sign({ customerId: newCustomer._id.toString(), tenantId }, env.WIDGET_JWT_SECRET!, {
@@ -71,7 +70,7 @@ export const initializeWidgetCustomer = async (req: Request, res: Response, next
 		return res.status(201).json({
 			message: "Anonymous visitor profile initialized",
 			token,
-			customer: newCustomer,
+			customer: newCustomer.toJSON(),
 		});
 	} catch (error) {
 		next(error);
@@ -184,6 +183,7 @@ export const getConversationMessages = async (req: Request, res: Response, next:
 					id: decoded.id,
 					tenantId: decoded.tenantId,
 					role: decoded.role,
+					plan: decoded.plan,
 				};
 				if (!req.user) return res.status(401).json({ error: "Session probably expired" });
 

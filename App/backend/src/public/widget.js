@@ -108,6 +108,28 @@
 		list.forEach(renderMessage);
 	}
 
+	//-------Error handling for fetch requests---------------
+	class SessionExpiredError extends Error {}
+
+	function resetSession() {
+		state.token = null;
+		state.customerId = null;
+		state.conversationId = null;
+		state.hasLoadedHistory = false;
+		initPromise = null;
+		messagesHistory = [];
+		messagesEl.innerHTML = "";
+		localStorage.removeItem("widgetToken");
+		localStorage.removeItem("widgetConversationId");
+
+		if (state.socket) {
+			const old = state.socket;
+			state.socket = null;
+			old.onclose = null; // stop auto-reconnect
+			old.close();
+		}
+	}
+
 	// ---- API calls -----------------------------------------------------
 	async function initCustomer() {
 		const res = await fetch(`${API_BASE}/api/widget/customer/init`, {
@@ -133,6 +155,9 @@
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ visitorToken: state.token }),
 		});
+
+		if (res.status === 401) throw new SessionExpiredError();
+
 		const data = await res.json();
 		state.conversationId = data.conversation._id;
 		localStorage.setItem("widgetConversationId", state.conversationId);
@@ -142,13 +167,16 @@
 	async function loadHistory() {
 		const url = `${API_BASE}/api/widget/chat/${state.conversationId}/messages`;
 		const res = await fetch(url, { headers: { Authorization: `Bearer ${state.token}` } });
+
+		if (res.status === 401) throw new SessionExpiredError();
+
 		const data = await res.json();
 		messagesHistory = data.messages || [];
 		renderMessages(messagesHistory);
 		state.hasLoadedHistory = true;
 	}
 
-	async function submitIdentify() {
+	async function submitIdentity() {
 		const email = identifyEmail.value.trim();
 		const name = identifyName.value.trim();
 		if (!email && !name) return;
@@ -317,24 +345,37 @@
 		}
 	});
 
-	identifySave.addEventListener("click", submitIdentify);
+	identifySave.addEventListener("click", submitIdentity);
 
 	// ---- Boot sequence on first open -----------------------------------------
 	let initPromise = null;
+	async function bootChat() {
+		if (!state.token) {
+			await (initPromise || (initPromise = initCustomer()));
+		}
+		if (!state.conversationId) {
+			await getOrCreateConversation();
+		}
+		if (!state.hasLoadedHistory) {
+			await loadHistory();
+		}
+		connectSocket();
+	}
+
 	async function openChat() {
 		try {
-			if (!state.token) {
-				await (initPromise || (initPromise = initCustomer()));
-			}
-			if (!state.conversationId) {
-				await getOrCreateConversation();
-			}
-			if (!state.hasLoadedHistory) {
-				await loadHistory();
-			}
-			connectSocket();
+			await bootChat();
 		} catch (err) {
-			console.error("[Widget] Failed to start chat:", err);
+			if (err instanceof SessionExpiredError) {
+				console.error("[Widget] Failed to start chat:", err);
+				return;
+			}
+			try {
+				resetSession();
+				await bootChat();
+			} catch (retryErr) {
+				console.error("[Widget] Retry failed:", retryErr);
+			}
 		}
 	}
 

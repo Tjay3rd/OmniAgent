@@ -4,9 +4,10 @@ import { env } from "../validation/env.zod.js";
 import Message from "../models/chatMessage.model.js";
 import User from "../models/user.model.js";
 import Conversation from "../models/chatConversation.model.js";
-import { generateAgentResponseStream } from "./ai.service.js";
+import { generateAgentResponseStream } from "./aiStreaming.service.js";
 import mongoose, { ObjectId } from "mongoose";
 import { messageSchema, statusUpdateSchema } from "../validation/socket.zod.js";
+import { ragQuery } from "./ragQuery.service.js";
 
 // Custom type extension to store session metadata directly on the socket object
 interface ExtendedWebSocket extends WebSocket {
@@ -273,6 +274,12 @@ const handleIncomingMessage = async (ws: ExtendedWebSocket, data: MessageData) =
 				sendErrorMessage(ws, undefined, conversationId, "AI response generation failed");
 			}
 		});
+		// ragQuery(tenantId, flattenedMessage.text, conversationId, ws).catch((error) => {
+		// 	console.error("AI stream failed", { conversationId, tenantId, error });
+		// 	if (ws.readyState === WebSocket.OPEN) {
+		// 		sendErrorMessage(ws, undefined, conversationId, "AI response generation failed");
+		// 	}
+		// });
 		console.log("AI is actively handling this. Processing streaming tokens...");
 	} else {
 		// THE AI IS MUTED. Alert the assigned agent's live dashboard view instead.

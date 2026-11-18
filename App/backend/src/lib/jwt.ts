@@ -39,7 +39,7 @@ export const setTokenCookies = async (res: Response, accessToken: string, refres
 
 export const signTokenAndSetCookies = async (
 	res: Response,
-	payload: { id: string; tenantId: string; role: string },
+	payload: { id: string; tenantId: string; role: string; plan: string },
 ): Promise<void> => {
 	const now = Date.now();
 	const familyId = uuidv4(); // Unique identifier for this token family lineage.

@@ -7,7 +7,7 @@ interface ITenant {
 	stripeCustomerId?: string;
 	subscriptionId?: string;
 	subscriptionStatus: "active" | "trialing" | "past_due" | "unpaid" | "inactive" | "cancelling";
-	plan?: "free" | "starter" | "production";
+	plan: "free" | "starter" | "production";
 	subscriptionPriceId?: string;
 	subscriptionPeriodStart?: Date;
 	subscriptionPeriodEnd?: Date;

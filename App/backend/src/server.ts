@@ -8,18 +8,22 @@ import { parseCookie } from "cookie";
 import helmet from "helmet";
 import { Request, Response, NextFunction } from "express";
 // Service & Router Core Hooks
+import { startIndexingWorker } from "./workers/index.worker.js";
 import { initWebSocketServer } from "./services/socket.service.js";
 import webhookRouter from "./routes/webhook.routes.js";
 import adminRouter from "./routes/admin.routes.js";
 import dashboardRouter from "./routes/dashboard.routes.js";
 import billingRouter from "./routes/billing.routes.js";
+import widgetRouter from "./routes/widget.routes.js";
 // Environment Configuration Validation
 import { env } from "./validation/env.zod.js";
-import widgetRouter from "./routes/widget.routes.js";
 import jwt from "jsonwebtoken";
+//middleware
+import { unverifiedLimiter } from "./middleware/rateLimit.js";
 
 const app = express();
 const httpServer = createServer(app);
+
 app.set("trust proxy", 1);
 app.get("/health", (_req, res) => res.sendStatus(200));
 
@@ -133,7 +137,7 @@ app.use(cookieParser());
 // 6. System Route Matrix Registrations
 app.use("/api/admin", dashboardCors, adminRouter);
 app.use("/api/dashboard", dashboardCors, dashboardRouter);
-app.use("/api/widget", widgetCors, widgetRouter);
+app.use("/api/widget", widgetCors, unverifiedLimiter, widgetRouter);
 app.use("/api/billing", dashboardCors, billingRouter);
 
 // 7. Centralized Production Error Capture Handler
@@ -170,3 +174,10 @@ const startServer = async () => {
 };
 
 startServer();
+
+const indexingWorker = startIndexingWorker();
+
+process.on("SIGTERM", async () => {
+	await indexingWorker.close(); // lets the current job finish
+	process.exit(0);
+});

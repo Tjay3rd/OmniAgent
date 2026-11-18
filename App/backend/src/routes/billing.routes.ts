@@ -4,8 +4,10 @@ import { Router } from "express";
 
 const billingRouter = Router();
 
-billingRouter.post("/checkout", requireAuth, createCheckoutSession);
-billingRouter.post("/portal", requireAuth, createBillingPortalSession);
-billingRouter.get("/subscription", requireAuth, getBilling);
+billingRouter.use(requireAuth); //JWT Auth middleware
+
+billingRouter.post("/checkout", createCheckoutSession);
+billingRouter.post("/portal", createBillingPortalSession);
+billingRouter.get("/subscription", getBilling);
 
 export default billingRouter;
